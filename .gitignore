@@ -28,8 +28,10 @@ go.work.sum
 # env file
 .env
 
+.terraform*
 # Local .terraform directories
 **/.terraform/*
+**/.terraform/**
 
 # .tfstate files
 *.tfstate

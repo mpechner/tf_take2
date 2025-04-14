@@ -1,0 +1,1 @@
+this is pulled from https://medium.com/@mitesh_shamra/state-management-with-terraform-9f13497e54cf

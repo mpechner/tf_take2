@@ -5,6 +5,7 @@
 #  --policy-type SERVICE_CONTROL_POLICY
 # aws organizations enable-policy-type   --root-id r-u7bj   --policy-type SERVICE_CONTROL_POLICY
 
+# create the SCP
 resource "aws_organizations_policy" "region_restriction" {
   name        = "AllowOnlyApprovedRegions"
   description = "Restrict region usage to specific approved regions"
@@ -13,6 +14,7 @@ resource "aws_organizations_policy" "region_restriction" {
   content = file("${path.module}/scp_policies/allow-only-approved-regions.json")
 }
 
+# create the org and make sure SCP is allowed
 resource "aws_organizations_organization" "org" {
   feature_set = "ALL"
   aws_service_access_principals = ["sso.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "ram.amazonaws.com", "tagpolicies.tag.amazonaws.com", "ipam.amazonaws.com"]

@@ -8,3 +8,11 @@ provider "aws" {
   alias  = "dr"
   region = "us-east-2"
 }
+terraform {
+  backend "s3" {
+    bucket = "mikey-com-terraformstate"
+    dynamodb_table = "terraform-state"
+    key    = "Organizartion"
+    region = "us-east-1"
+  }
+}

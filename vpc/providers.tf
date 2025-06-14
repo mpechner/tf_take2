@@ -6,7 +6,7 @@ provider "aws" {
 
 provider "aws" {
   alias  = "dr"
-  region = "us-east-2"
+  region = "us-east-1"
 }
 terraform {
   backend "s3" {

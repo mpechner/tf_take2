@@ -14,6 +14,20 @@ variable "azs"{
     type = list(string)
 }
 
+variable "enable_nat_gateway"{
+    default = true
+}
+
+variable "single_nat_gateway" {
+    default = true
+}
+
+
+
+
+#
+# subnets 
+#
 variable "private_subnets" {
     type = list(string)
 }
@@ -38,12 +52,4 @@ variable "db_subnets" {
 
 variable "db_subnet_names" {
     type = list(string)
-}
-
-variable "enable_nat_gateway"{
-    default = true
-}
-
-variable "single_nat_gateway" {
-    default = true
 }

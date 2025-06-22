@@ -1,12 +1,11 @@
 
 provider "aws" {
-  alias  = "primary"
-  region = "us-west-1"
+  region = "us-west-2"
 }
 
 provider "aws" {
   alias  = "dr"
-  region = "us-east-1"
+  region = "us-east-2"
 }
 terraform {
   backend "s3" {

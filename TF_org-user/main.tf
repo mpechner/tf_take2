@@ -1,7 +1,7 @@
 # dev
 provider "aws" {
   alias  = "dev"
-  region = "us-west-1"
+  region = "us-west-2"
   assume_role {
     role_arn = "arn:aws:iam::364082771643:role/OrganizationAccountAccessRole"
   }
@@ -16,7 +16,7 @@ module "terraform_execute_dev1" {
 #mgmt
 provider "aws" {
   alias  = "mgmt"
-  region = "us-west-1"
+  region = "us-west-2"
   assume_role {
     role_arn = "arn:aws:iam::111416589270:role/OrganizationAccountAccessRole"
   }
@@ -32,7 +32,7 @@ module "terraform_execute_mgmt" {
 # network
 provider "aws" {
   alias  = "network"
-  region = "us-west-1"
+  region = "us-west-2"
   assume_role {
     role_arn = "arn:aws:iam::061154959995:role/OrganizationAccountAccessRole"
   }
@@ -48,7 +48,7 @@ module "terraform_execute_network" {
 # prod
 provider "aws" {
   alias  = "prod"
-  region = "us-west-1"
+  region = "us-west-2"
   assume_role {
     role_arn = "arn:aws:iam::972553824779:role/OrganizationAccountAccessRole"
   }

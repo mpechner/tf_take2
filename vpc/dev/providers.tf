@@ -1,6 +1,5 @@
 
 provider "aws" {
-  alias  = "primary"
   region = var.region
 
     assume_role {

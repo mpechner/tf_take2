@@ -9,6 +9,7 @@
         "Condition": {
           "StringNotEqualsIfExists": {
             "aws:RequestedRegion": [
+              "us-west-2",
               "us-west-1",
               "us-east-1"
             ]

@@ -20,10 +20,12 @@ variable     azs {
     default = [ "us-west-2a","us-west-2b","us-west-2c" ]
 }
 variable     private_subnets {
-    default = ["10.8.16.0/20", "10.8.80.0/20", "10.8.144.0/20"]
+    default = ["10.8.16.0/20", "10.8.80.0/20", "10.8.144.0/20", 
+    "10.8.192.0/20", "10.8.208.0/20", "10.8.224.0/20"]
 }
 variable     private_subnet_names {
-    default = [ "dev-priv-us-west-2a", "dev-priv-us-west-2b", "dev-priv-us-west-2c" ]
+    default = [ "dev-priv-us-west-2a", "dev-priv-us-west-2b", "dev-priv-us-west-2c",
+    "dev-rke-us-west-2a", "dev-rke-us-west-2b", "dev-rke-us-west-2c"  ]
 }
     
 variable     public_subnets {

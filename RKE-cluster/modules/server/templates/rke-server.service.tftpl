@@ -1,0 +1,19 @@
+[Unit]
+Description=RKE Server Service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=${ansible_user}
+Group=${ansible_user}
+WorkingDirectory=/opt/rke
+ExecStart=/usr/local/bin/rke up --config /opt/rke/cluster.yml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/home/${ansible_user}
+
+[Install]
+WantedBy=multi-user.target 

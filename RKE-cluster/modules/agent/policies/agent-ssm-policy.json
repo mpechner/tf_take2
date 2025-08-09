@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:DescribeInstanceInformation",
+        "ssm:ListCommands",
+        "ssm:ListCommandInvocations",
+        "ssm:SendCommand",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:UpdateInstanceInformation"
+      ],
+      "Resource": "arn:aws:ec2:*:*:instance/*"
+    }
+  ]
+} 

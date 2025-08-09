@@ -1,0 +1,93 @@
+# RKE Server Configuration
+# This file contains the configuration for RKE server (control plane) nodes
+
+# Cluster configuration
+cluster_name: "${cluster_name}"
+
+# Kubernetes version
+kubernetes_version: "${kubernetes_version}"
+
+# Network configuration
+network:
+  plugin: "${network_plugin}"
+  options:
+    flannel_backend_type: vxlan
+    calico_cloud_provider: aws
+
+# Service configuration
+services:
+  etcd:
+    backup_config:
+      enabled: ${etcd_backup_enabled}
+      interval_hours: 12
+      retention: ${etcd_backup_retention}
+      s3backupconfig:
+        access_key: ""
+        secret_key: ""
+        bucket_name: ""
+        region: ""
+        endpoint: ""
+  kube_api:
+    service_cluster_ip_range: "${service_cluster_ip_range}"
+    service_node_port_range: "30000-32767"
+    pod_security_policy: ${pod_security_policy}
+    audit_log:
+      enabled: ${audit_log_enabled}
+      max_age: ${audit_log_max_age}
+      max_backup: ${audit_log_max_backup}
+      max_size: ${audit_log_max_size}
+  kube_controller:
+    cluster_cidr: "10.42.0.0/16"
+    service_cluster_ip_range: "${service_cluster_ip_range}"
+  scheduler:
+    extra_args:
+      v: 2
+  kubelet:
+    cluster_dns_server: "${cluster_dns_service}"
+    cluster_domain: "cluster.local"
+    extra_args:
+      max-pods: 250
+      node-ip: "${node_ip}"
+
+# Node configuration
+nodes:
+  - address: "${node_ip}"
+    internal_address: "${node_ip}"
+    user: "${ansible_user}"
+    role:
+      - controlplane
+      - etcd
+    ssh_key_path: "${ansible_ssh_private_key_file}"
+    labels:
+      node-role.kubernetes.io/controlplane: "true"
+      node-role.kubernetes.io/etcd: "true"
+
+# Authentication
+authentication:
+  strategy: x509
+  sans:
+    - "${node_ip}"
+
+# Authorization
+authorization:
+  mode: rbac
+
+# Ingress
+ingress:
+  provider: nginx
+  options:
+    use-forwarded-headers: "true"
+
+# DNS
+dns:
+  provider: coredns
+
+# Monitoring
+monitoring:
+  provider: metrics-server
+
+# Logging
+logging:
+  provider: ""
+  level: info
+  format: json 

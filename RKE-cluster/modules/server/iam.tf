@@ -48,7 +48,7 @@ resource "aws_iam_role_policy" "rke_server_etcd_backup" {
 resource "aws_iam_openid_connect_provider" "rke_oidc" {
   count = var.enable_irsa ? 1 : 0
   
-  url = "https://oidc.eks.${var.aws_region}.amazonaws.com/id/${var.oidc_provider_id}"
+  url = "https://oidc.${var.cluster_name}.${var.aws_region}.amazonaws.com"
   
   client_id_list = ["sts.amazonaws.com"]
   

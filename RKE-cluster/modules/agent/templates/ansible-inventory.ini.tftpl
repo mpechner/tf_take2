@@ -5,8 +5,9 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/
 ansible_python_interpreter=/usr/bin/python3
 
 [rke_agents]
-# This will be populated dynamically by the playbook
-# Nodes with names starting with "agent" will be added here
+%{ for ip in agent_instance_ips ~}
+${ip}
+%{ endfor ~}
 
 [rke_agents:vars]
 node_type=agent 

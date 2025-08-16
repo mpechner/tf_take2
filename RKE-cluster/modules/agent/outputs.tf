@@ -10,20 +10,21 @@ output "iam_role_arn" {
   value       = aws_iam_role.rke_agent.arn
 }
 
-output "launch_template_id" {
-  description = "ID of the launch template created for RKE agent nodes"
-  value       = aws_launch_template.rke_agent.id
-}
-
-output "autoscaling_group_name" {
-  description = "Name of the Auto Scaling Group for RKE agent nodes"
-  value       = aws_autoscaling_group.rke_agent.name
-}
-
-output "autoscaling_group_arn" {
-  description = "ARN of the Auto Scaling Group for RKE agent nodes"
-  value       = aws_autoscaling_group.rke_agent.arn
-}
+# These resources are not created by this module, so removing the outputs
+# output "launch_template_id" {
+#   description = "ID of the launch template created for RKE agent nodes"
+#   value       = aws_launch_template.rke_agent.id
+# }
+# 
+# output "autoscaling_group_name" {
+#   description = "Name of the Auto Scaling Group for RKE agent nodes"
+#   value       = aws_autoscaling_group.rke_agent.name
+# }
+# 
+# output "autoscaling_group_arn" {
+#   description = "ARN of the Auto Scaling Group for RKE agent nodes"
+#   value       = aws_autoscaling_group.rke_agent.arn
+# }
 
 output "instance_profile_arn" {
   description = "ARN of the instance profile for RKE agent nodes"

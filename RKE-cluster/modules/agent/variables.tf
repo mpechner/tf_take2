@@ -15,17 +15,18 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
-variable "agent_count" {
-  description = "Number of RKE agent nodes to create"
-  type        = number
-  default     = 2
+# This variable is no longer needed since we're not automatically running Ansible
+# variable "instance_ids" {
+#   description = "List of EC2 instance IDs to configure as RKE agent nodes"
+#   type        = list(string)
+# }
+
+variable "agent_instance_ips" {
+  description = "List of agent instance IP addresses for Ansible execution"
+  type        = list(string)
+  default     = []
 }
 
-variable "instance_type" {
-  description = "EC2 instance type for RKE agent nodes"
-  type        = string
-  default     = "t3.medium"
-}
 
 variable "key_name" {
   description = "Name of the SSH key pair to use for RKE agent nodes"
@@ -83,7 +84,7 @@ variable "rke_version" {
 variable "ansible_user" {
   description = "Ansible user to connect to the instances"
   type        = string
-  default     = "ec2-user"
+  default     = "ubuntu"
 }
 
 variable "ansible_ssh_private_key_file" {
@@ -92,17 +93,17 @@ variable "ansible_ssh_private_key_file" {
   default     = "~/.ssh/id_rsa"
 }
 
-variable "ansible_repo" {
-  description = "Git repository URL for Ansible playbooks"
-  type        = string
-  default     = "https://github.com/your-org/your-ansible-repo.git"
-}
+#variable "ansible_repo" {
+#  description = "Git repository URL for Ansible playbooks"
+#  type        = string
+#  default     = "https://github.com/your-org/your-ansible-repo.git"
+#}
 
-variable "ansible_playbook" {
-  description = "Ansible playbook file name"
-  type        = string
-  default     = "playbook.yml"
-}
+#variable "ansible_playbook" {
+#  description = "Ansible playbook file name"
+#  type        = string
+#  default     = "playbook.yml"
+#}
 
 variable "enable_irsa" {
   description = "Whether to enable IRSA (IAM Roles for Service Accounts)"
@@ -120,4 +121,17 @@ variable "app_s3_bucket" {
   description = "S3 bucket name for application data"
   type        = string
   default     = ""
-} 
+}
+
+# These variables are now handled dynamically per instance
+# variable "node_name" {
+#   description = "Name of the agent node (will be set dynamically)"
+#   type        = string
+#   default     = ""
+# }
+# 
+# variable "node_ip" {
+#   description = "IP address of the agent node (will be set dynamically)"
+#   type        = string
+#   default     = ""
+# } 

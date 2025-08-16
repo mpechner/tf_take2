@@ -5,8 +5,9 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/
 ansible_python_interpreter=/usr/bin/python3
 
 [rke_servers]
-# This will be populated dynamically by the playbook
-# Nodes with names starting with "server" will be added here
+%{ for ip in server_instance_ips ~}
+${ip}
+%{ endfor ~}
 
 [rke_servers:vars]
 node_type=server 

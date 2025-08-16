@@ -186,4 +186,10 @@ variable "etcd_backup_bucket" {
   description = "S3 bucket name for etcd backups"
   type        = string
   default     = ""
+}
+
+variable "server_instance_ips" {
+  description = "List of server instance IP addresses for Ansible execution"
+  type        = list(string)
+  default     = []
 } 

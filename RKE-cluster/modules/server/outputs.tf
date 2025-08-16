@@ -30,6 +30,11 @@ output "oidc_provider_arn" {
   value       = var.enable_irsa ? aws_iam_openid_connect_provider.rke_oidc[0].arn : null
 }
 
+output "oidc_provider_id" {
+  description = "ID of the OIDC provider"
+  value       = var.enable_irsa ? aws_iam_openid_connect_provider.rke_oidc[0].id : null
+}
+
 output "cluster_admin_service_account_role_arn" {
   description = "ARN of the cluster admin service account role"
   value       = var.enable_irsa ? aws_iam_role.cluster_admin_service_account[0].arn : null

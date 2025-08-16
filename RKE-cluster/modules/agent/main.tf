@@ -94,6 +94,7 @@ resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/ansible-inventory.ini.tftpl", {
     ansible_user = var.ansible_user
     ansible_ssh_private_key_file = var.ansible_ssh_private_key_file
+    agent_instance_ips = var.agent_instance_ips
   })
   filename = "${path.module}/ansible/inventory.ini"
 }
@@ -116,6 +117,8 @@ resource "local_file" "rke_agent_config_template" {
   content = templatefile("${path.module}/templates/rke-agent-config.yml.tftpl", {
     cluster_name = var.cluster_name
     docker_version = var.docker_version
+    node_name = "agent-node"
+    node_ip = "{{ ansible_default_ipv4.address }}"
   })
   filename = "${path.module}/ansible/templates/rke-agent-config.yml.j2"
 }
@@ -130,11 +133,21 @@ resource "local_file" "rke_agent_service_template" {
 resource "local_file" "join_cluster_script_template" {
   content = templatefile("${path.module}/templates/join-cluster.sh.tftpl", {
     cluster_name = var.cluster_name
+    node_name = "agent-node"
+    node_ip = "{{ ansible_default_ipv4.address }}"
   })
   filename = "${path.module}/ansible/templates/join-cluster.sh.j2"
 }
 
-# Null resource to run Ansible playbook after instances are discovered
+# Note: Ansible provisioning should be run separately after Terraform creates the infrastructure
+# The agent module creates the necessary files and infrastructure, but Ansible execution
+# should be handled manually or through a separate CI/CD pipeline
+# 
+# To run the playbooks manually after Terraform creates the instances:
+# 1. Get the instance IPs from the EC2 module outputs
+# 2. Run: ansible-playbook -i inventory.ini playbook.yml 
+
+# Run Ansible playbook on the agent instances
 resource "null_resource" "ansible_provision" {
   depends_on = [
     local_file.ansible_inventory,
@@ -148,15 +161,19 @@ resource "null_resource" "ansible_provision" {
     cluster_name = var.cluster_name
     docker_version = var.docker_version
     rke_version = var.rke_version
+    agent_ips = join(",", var.agent_instance_ips)
   }
 
+  # This will run the Ansible playbook on all agent instances
   provisioner "local-exec" {
     command = <<-EOT
       sleep 30  # Wait for instances to be ready
+      cd ${path.module}/ansible
       ansible-playbook \
-        -i ${path.module}/ansible/inventory.ini \
-        ${path.module}/ansible/rke-agent-playbook.yml \
-        --extra-vars "cluster_name=${var.cluster_name} region=${var.aws_region}"
+        -i inventory.ini \
+        rke-agent-playbook.yml \
+        --extra-vars "cluster_name=${var.cluster_name} region=${var.aws_region}" \
+        --limit "agent"
     EOT
   }
 } 

@@ -116,6 +116,7 @@ resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/ansible-inventory.ini.tftpl", {
     ansible_user = var.ansible_user
     ansible_ssh_private_key_file = var.ansible_ssh_private_key_file
+    server_instance_ips = var.server_instance_ips
   })
   filename = "${path.module}/ansible/inventory.ini"
 }
@@ -144,6 +145,17 @@ resource "local_file" "rke_server_config_template" {
     kubernetes_version = var.kubernetes_version
     etcd_backup_enabled = var.etcd_backup_enabled
     etcd_backup_retention = var.etcd_backup_retention
+    network_plugin = var.network_plugin
+    service_cluster_ip_range = var.service_cluster_ip_range
+    pod_security_policy = var.pod_security_policy
+    audit_log_enabled = var.audit_log_enabled
+    audit_log_max_age = var.audit_log_max_age
+    audit_log_max_backup = var.audit_log_max_backup
+    audit_log_max_size = var.audit_log_max_size
+    cluster_dns_service = var.cluster_dns_service
+    node_ip = "{{ ansible_default_ipv4.address }}"
+    ansible_user = var.ansible_user
+    ansible_ssh_private_key_file = var.ansible_ssh_private_key_file
   })
   filename = "${path.module}/ansible/templates/rke-server-config.yml.j2"
 }
@@ -158,11 +170,16 @@ resource "local_file" "rke_server_service_template" {
 resource "local_file" "cluster_init_script_template" {
   content = templatefile("${path.module}/templates/init-cluster.sh.tftpl", {
     cluster_name = var.cluster_name
+    ansible_user = var.ansible_user
   })
   filename = "${path.module}/ansible/templates/init-cluster.sh.j2"
 }
 
-# Null resource to run Ansible playbook after instances are discovered
+# Note: Ansible provisioning should be run separately after Terraform creates the infrastructure
+# The server module creates the necessary files and infrastructure, but Ansible execution
+# should be handled manually or through a separate CI/CD pipeline
+
+# Run Ansible playbook on the server instances
 resource "null_resource" "ansible_provision" {
   depends_on = [
     local_file.ansible_inventory,
@@ -177,15 +194,19 @@ resource "null_resource" "ansible_provision" {
     docker_version = var.docker_version
     rke_version = var.rke_version
     kubernetes_version = var.kubernetes_version
+    server_ips = join(",", var.server_instance_ips)
   }
 
+  # This will run the Ansible playbook on all server instances
   provisioner "local-exec" {
     command = <<-EOT
       sleep 30  # Wait for instances to be ready
+      cd ${path.module}/ansible
       ansible-playbook \
-        -i ${path.module}/ansible/inventory.ini \
-        ${path.module}/ansible/rke-server-playbook.yml \
-        --extra-vars "cluster_name=${var.cluster_name} region=${var.aws_region}"
+        -i inventory.ini \
+        rke-server-playbook.yml \
+        --extra-vars "cluster_name=${var.cluster_name} region=${var.aws_region}" \
+        --limit "server"
     EOT
   }
 } 

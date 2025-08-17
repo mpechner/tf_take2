@@ -149,6 +149,8 @@ resource "local_file" "join_cluster_script_template" {
 
 # Run Ansible playbook on the agent instances
 resource "null_resource" "ansible_provision" {
+  count = length(var.agent_instance_ips)
+  
   depends_on = [
     local_file.ansible_inventory,
     local_file.ansible_playbook,
@@ -161,19 +163,22 @@ resource "null_resource" "ansible_provision" {
     cluster_name = var.cluster_name
     docker_version = var.docker_version
     rke_version = var.rke_version
-    agent_ips = join(",", var.agent_instance_ips)
+    instance_ip = var.agent_instance_ips[count.index]
   }
 
-  # This will run the Ansible playbook on all agent instances
-  provisioner "local-exec" {
-    command = <<-EOT
-      sleep 30  # Wait for instances to be ready
-      cd ${path.module}/ansible
-      ansible-playbook \
-        -i inventory.ini \
-        rke-agent-playbook.yml \
-        --extra-vars "cluster_name=${var.cluster_name} region=${var.aws_region}" \
-        --limit "agent"
-    EOT
+  # This will run the Ansible playbook on each agent instance using SSH
+  provisioner "remote-exec" {
+    inline = [
+      "sleep 30",  # Wait for instance to be ready
+      "cd /opt/ansible-playbook",
+      "ansible-playbook -i 'localhost,' -c local rke-agent-playbook.yml --extra-vars 'cluster_name=${var.cluster_name} region=${var.aws_region}'"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = var.ansible_user
+      private_key = file(var.ansible_ssh_private_key_file)
+      host        = var.agent_instance_ips[count.index]
+    }
   }
 } 

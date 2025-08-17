@@ -181,6 +181,8 @@ resource "local_file" "cluster_init_script_template" {
 
 # Run Ansible playbook on the server instances
 resource "null_resource" "ansible_provision" {
+  count = length(var.server_instance_ips)
+  
   depends_on = [
     local_file.ansible_inventory,
     local_file.ansible_playbook,
@@ -194,19 +196,22 @@ resource "null_resource" "ansible_provision" {
     docker_version = var.docker_version
     rke_version = var.rke_version
     kubernetes_version = var.kubernetes_version
-    server_ips = join(",", var.server_instance_ips)
+    instance_ip = var.server_instance_ips[count.index]
   }
 
-  # This will run the Ansible playbook on all server instances
-  provisioner "local-exec" {
-    command = <<-EOT
-      sleep 30  # Wait for instances to be ready
-      cd ${path.module}/ansible
-      ansible-playbook \
-        -i inventory.ini \
-        rke-server-playbook.yml \
-        --extra-vars "cluster_name=${var.cluster_name} region=${var.aws_region}" \
-        --limit "server"
-    EOT
+  # This will run the Ansible playbook on each server instance using SSH
+  provisioner "remote-exec" {
+    inline = [
+      "sleep 30",  # Wait for instance to be ready
+      "cd /opt/ansible-playbook",
+      "ansible-playbook -i 'localhost,' -c local rke-server-playbook.yml --extra-vars 'cluster_name=${var.cluster_name} region=${var.aws_region}'"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = var.ansible_user
+      private_key = file(var.ansible_ssh_private_key_file)
+      host        = var.server_instance_ips[count.index]
+    }
   }
 } 

@@ -1,7 +1,12 @@
 # Enable flags
 variable "traefik_enabled" { type = bool default = true }
-variable "external_dns_enabled" { type = bool default = false }
-variable "cert_manager_enabled" { type = bool default = false }
+variable "external_dns_enabled" { type = bool default = true }
+variable "cert_manager_enabled" { type = bool default = true }
+
+# AWS Region and Route53 Domain
+variable "aws_region" { type = string default = "us-west-2" }
+variable "route53_zone_id" { type = string description = "Route53 hosted zone ID for DNS records" }
+variable "route53_domain" { type = string description = "Route53 hosted zone domain name" }
 
 # Traefik
 variable "traefik_name" { type = string default = "traefik" }
@@ -43,5 +48,9 @@ variable "cert_manager_set" {
   default = []
 }
 variable "cert_manager_values" { type = list(string) default = [] }
+
+# Let's Encrypt
+variable "letsencrypt_email" { type = string description = "Email for Let's Encrypt certificate notifications" }
+variable "letsencrypt_environment" { type = string default = "prod" description = "prod or staging" }
 
 

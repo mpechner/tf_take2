@@ -21,6 +21,33 @@ resource "helm_release" "traefik" {
     value = var.service_type
   }
 
+  # Enable Dashboard and API
+  set {
+    name  = "dashboard.enabled"
+    value = "true"
+  }
+
+  set {
+    name  = "api.dashboard"
+    value = "true"
+  }
+
+  set {
+    name  = "api.insecure"
+    value = "true"
+  }
+
+  # Expose ports
+  set {
+    name  = "ports.web.expose"
+    value = "true"
+  }
+
+  set {
+    name  = "ports.websecure.expose"
+    value = "true"
+  }
+
   dynamic "set" {
     for_each = var.set
     content {

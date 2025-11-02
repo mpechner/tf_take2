@@ -1,0 +1,187 @@
+---
+# Example 1: Using Traefik IngressRoute (Recommended for Traefik)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: example-app
+  namespace: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`app.example.com`)
+      kind: Rule
+      services:
+        - name: example-service
+          port: 8080
+  tls:
+    certResolver: letsencrypt-prod  # or letsencrypt-staging
+
+---
+# Example 2: Using Standard Kubernetes Ingress
+# This also works with Traefik and automatically gets DNS + TLS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-app
+  namespace: default
+  annotations:
+    # Use this for automatic TLS from Let's Encrypt
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # External-DNS will create DNS records for hosts listed below
+    external-dns.alpha.kubernetes.io/hostname: "web.example.com"
+spec:
+  # This must match one of your Traefik's ingressClasses
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - web.example.com
+      secretName: web-app-tls  # cert-manager will create this secret
+  rules:
+    - host: web.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-service
+                port:
+                  number: 3000
+
+---
+# Example 3: API with specific path routing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-service
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: api-service-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: api-v1
+                port:
+                  number: 5000
+          - path: /v2
+            pathType: Prefix
+            backend:
+              service:
+                name: api-v2
+                port:
+                  number: 5000
+
+---
+# Example 4: Multiple hosts for the same service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-host-app
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - app.example.com
+        - app-staging.example.com
+      secretName: multi-host-tls
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: production-app
+                port:
+                  number: 8080
+    - host: app-staging.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: staging-app
+                port:
+                  number: 8080
+
+---
+# Example 5: IngressRoute with middleware
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: app-with-headers
+  namespace: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`secure-app.example.com`)
+      kind: Rule
+      services:
+        - name: secure-service
+          port: 8080
+      middlewares:
+        - name: add-headers
+          namespace: default
+  tls:
+    certResolver: letsencrypt-prod
+
+---
+# Example Middleware: Add security headers
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: add-headers
+  namespace: default
+spec:
+  headers:
+    customResponseHeaders:
+      X-Custom-Response-Header: "true"
+      X-Content-Type-Options: "nosniff"
+      X-Frame-Options: "SAMEORIGIN"
+      X-XSS-Protection: "1; mode=block"
+
+---
+# Example Service (for reference)
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service
+  namespace: default
+spec:
+  selector:
+    app: example
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+# Usage Instructions:
+# 1. Replace "example.com" with your actual domain
+# 2. Replace service names and ports to match your services
+# 3. Apply the ingress resources:
+#    kubectl apply -f example-ingress.yaml
+# 4. Monitor certificate creation:
+#    kubectl get certificates
+# 5. Monitor DNS records:
+#    kubectl logs -n kube-system -l app.kubernetes.io/name=external-dns -f
+# 6. Access your application:
+#    curl https://app.example.com

@@ -23,6 +23,7 @@ module "ingress" {
   aws_region       = "us-west-2"
   route53_zone_id  = "Z1234567890ABC"  # Your hosted zone ID
   route53_domain   = "example.com"     # Your domain
+  # route53_assume_role_arn = "arn:aws:iam::123456789012:role/route53-access"
 
   # Let's Encrypt Configuration
   letsencrypt_email       = "admin@example.com"
@@ -41,6 +42,17 @@ module "ingress" {
       type  = "string"
     }
   ]
+
+  # Optional: Managed ingresses
+  ingresses = {
+    app = {
+      namespace      = "default"
+      host           = "app.example.com"
+      service_name   = "my-service"
+      service_port   = 8080
+      cluster_issuer = "letsencrypt-prod"
+    }
+  }
 }
 ```
 
@@ -59,6 +71,8 @@ module "ingress" {
 ### Optional Variables
 - `letsencrypt_environment` - Use "staging" for testing, "prod" for production
 - `aws_region` - AWS region for Route53 (default: us-west-2)
+- `route53_assume_role_arn` - Optional cross-account role for Route53 access
+- `ingresses` - Map of ingress definitions to create in the cluster
 
 ## Setting Up the Stack
 
@@ -119,6 +133,12 @@ Ensure your cluster has the necessary IAM permissions. Nodes need these permissi
 }
 ```
 
+## Account-Specific Deployment Layout
+
+This repo now mirrors the `RKE-cluster` layout for ingress deployments. Use
+`ingress/dev-cluster` as the dev account stack and pass account-specific
+settings (Route53 zone, email, and ingresses) there.
+
 ### Step 2: Apply Terraform Configuration
 
 ```bash
@@ -142,6 +162,11 @@ kubectl get svc -n kube-system traefik
 ```
 
 ## Creating Ingresses
+
+### Managed Ingresses (Terraform)
+Add entries to `ingresses` to have Terraform create multiple ingress resources per account.
+Each entry supports `host`, `service_name`, `service_port`, `cluster_issuer`, and optional
+`path`, `path_type`, `ingress_class_name`, `tls_secret_name`, and `annotations`.
 
 ### Method 1: Using Traefik IngressRoute (Recommended)
 

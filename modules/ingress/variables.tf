@@ -7,6 +7,11 @@ variable "cert_manager_enabled" { type = bool default = true }
 variable "aws_region" { type = string default = "us-west-2" }
 variable "route53_zone_id" { type = string description = "Route53 hosted zone ID for DNS records" }
 variable "route53_domain" { type = string description = "Route53 hosted zone domain name" }
+variable "route53_assume_role_arn" {
+  type        = string
+  default     = null
+  description = "Optional IAM role ARN for cross-account Route53 access"
+}
 
 # Traefik
 variable "traefik_name" { type = string default = "traefik" }
@@ -52,5 +57,23 @@ variable "cert_manager_values" { type = list(string) default = [] }
 # Let's Encrypt
 variable "letsencrypt_email" { type = string description = "Email for Let's Encrypt certificate notifications" }
 variable "letsencrypt_environment" { type = string default = "prod" description = "prod or staging" }
+
+# Managed Ingresses
+variable "ingresses" {
+  description = "Ingress definitions to create in the cluster"
+  type = map(object({
+    namespace          = optional(string, "default")
+    host               = string
+    service_name       = string
+    service_port       = number
+    path               = optional(string, "/")
+    path_type          = optional(string, "Prefix")
+    ingress_class_name = optional(string, "traefik")
+    tls_secret_name    = optional(string)
+    cluster_issuer     = optional(string)
+    annotations        = optional(map(string), {})
+  }))
+  default = {}
+}
 
 

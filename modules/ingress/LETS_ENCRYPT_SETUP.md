@@ -21,6 +21,7 @@ aws route53 get-hosted-zone --id Z1234567890ABC
 ### 2. AWS IAM Permissions
 - [ ] Cluster nodes have Route53 permissions attached
 - [ ] Permissions include: `route53:ChangeResourceRecordSets`, `route53:ListHostedZones`, `route53:GetChange`
+- [ ] If the hosted zone is in a different account, you have a Route53 assume-role ARN for cross-account access
 
 **Required Policy:**
 ```json
@@ -41,6 +42,9 @@ aws route53 get-hosted-zone --id Z1234567890ABC
   ]
 }
 ```
+
+**Cross-account note:**
+- If your Route53 hosted zone lives in another AWS account, configure `route53_assume_role_arn` in Terraform and ensure the role trust policy allows the cluster (IRSA or node role) to assume it.
 
 **Verify permissions:**
 ```bash
@@ -75,6 +79,7 @@ nslookup example.com
 aws_region       = "us-west-2"  # Match your infrastructure
 route53_zone_id  = "Z1234567890ABC"  # Your hosted zone ID
 route53_domain   = "example.com"     # Your domain
+# route53_assume_role_arn = "arn:aws:iam::123456789012:role/route53-access"
 
 # ✅ Let's Encrypt Configuration
 letsencrypt_email       = "admin@example.com"  # Your email
@@ -84,6 +89,17 @@ letsencrypt_environment = "staging"            # START WITH STAGING!
 traefik_enabled      = true
 external_dns_enabled = true
 cert_manager_enabled = true
+
+# ✅ Optional: Managed ingresses
+ingresses = {
+  app = {
+    namespace      = "default"
+    host           = "app.example.com"
+    service_name   = "my-service"
+    service_port   = 8080
+    cluster_issuer = "letsencrypt-staging"
+  }
+}
 ```
 
 ### Step 2: Verify Terraform Configuration

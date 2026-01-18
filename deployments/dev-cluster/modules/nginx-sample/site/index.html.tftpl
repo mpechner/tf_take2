@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to ${domain}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .container {
+      text-align: center;
+      padding: 2rem;
+      background: rgba(255,255,255,0.1);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+    }
+    h1 { margin-bottom: 0.5rem; }
+    .domain { color: #a5f3fc; font-size: 1.2rem; }
+    .info { margin-top: 2rem; font-size: 0.9rem; opacity: 0.8; }
+    .status { color: #86efac; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Hello from Kubernetes!</h1>
+    <p class="domain">${hostname}</p>
+    <p class="status">✓ Nginx is running</p>
+    <p class="status">✓ Ingress is configured</p>
+    <p class="status">✓ TLS is ${tls_enabled ? "enabled" : "disabled"}</p>
+    <div class="info">
+      <p>Environment: ${environment}</p>
+      <p>Namespace: ${namespace}</p>
+    </div>
+  </div>
+</body>
+</html>

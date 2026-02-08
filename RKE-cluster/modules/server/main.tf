@@ -192,7 +192,7 @@ resource "null_resource" "ansible_provision" {
 
   # Upload generated Ansible files to the instance
   provisioner "file" {
-    source      = "${path.module}/ansible"
+    source      = "${path.module}/ansible/"
     destination = "/home/${var.ansible_user}/ansible-playbook"
 
     connection {

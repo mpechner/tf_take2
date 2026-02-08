@@ -19,8 +19,8 @@ variable "environment" {
 }
 
 variable "domain" {
-  deefault= "dev.foobar.support"
   type        = string
+  default     = "dev.foobar.support"
   description = "Domain name for the sample site (e.g., dev.foobar.support)"
 }
 

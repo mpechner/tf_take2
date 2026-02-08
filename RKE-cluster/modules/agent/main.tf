@@ -1,67 +1,6 @@
 # RKE Agent Module - Main Configuration
 # This module configures existing EC2 instances as RKE agent nodes using Ansible
-
-# Security group for RKE agent nodes
-resource "aws_security_group" "rke_agent" {
-  name_prefix = "${var.cluster_name}-rke-agent-"
-  vpc_id      = var.vpc_id
-
-  # SSH access
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.ssh_cidr_blocks
-  }
-
-  # RKE required ports
-  ingress {
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 10250
-    to_port     = 10250
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 2379
-    to_port     = 2380
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 8472
-    to_port     = 8472
-    protocol    = "udp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 9099
-    to_port     = 9099
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  # All outbound traffic
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, {
-    Name = "${var.cluster_name}-rke-agent-sg"
-  })
-}
+# Note: Security groups are managed by the EC2 module, not here
 
 # IAM role for RKE agent nodes
 resource "aws_iam_role" "rke_agent" {
@@ -181,6 +120,47 @@ resource "null_resource" "ansible_provision" {
       "ansible-galaxy collection install -r requirements.yml --force || true",
       "test -f rke-agent-playbook.yml || { echo 'missing rke-agent-playbook.yml in $(pwd)'; exit 1; }",
       "ANSIBLE_PYTHON_INTERPRETER=/usr/bin/python3 ansible-playbook -i 'localhost,' -c local rke-agent-playbook.yml --extra-vars 'cluster_name=${var.cluster_name} region=${var.aws_region} ansible_user=${var.ansible_user} server_endpoint=${var.server_endpoint}'"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = var.ansible_user
+      private_key = file(var.ansible_ssh_private_key_file)
+      host        = var.agent_instance_ips[count.index]
+    }
+  }
+
+  # Health check: Verify RKE2 server is accessible before starting agent
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Verifying RKE2 server is accessible at ${var.server_endpoint}...'",
+      "for i in $(seq 1 30); do",
+      "  if curl -k https://${var.server_endpoint}:9345/ping &>/dev/null; then",
+      "    echo 'RKE2 server is accessible'",
+      "    break",
+      "  fi",
+      "  echo \"Waiting for RKE2 server... attempt $i/30\"",
+      "  sleep 10",
+      "done",
+      "curl -k https://${var.server_endpoint}:9345/ping &>/dev/null || { echo 'RKE2 server not accessible after 5 minutes'; exit 1; }"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = var.ansible_user
+      private_key = file(var.ansible_ssh_private_key_file)
+      host        = var.agent_instance_ips[count.index]
+    }
+  }
+
+  # Health check: Wait for agent to successfully join cluster
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Waiting for agent to join cluster...'",
+      "sleep 30",
+      "echo 'Verifying RKE2 agent service is running:'",
+      "sudo systemctl status rke2-agent --no-pager || true",
+      "echo 'Agent node initialization complete'"
     ]
 
     connection {

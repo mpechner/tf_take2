@@ -1,9 +1,5 @@
 # RKE Agent Module Outputs
-
-output "security_group_id" {
-  description = "ID of the security group created for RKE agent nodes"
-  value       = aws_security_group.rke_agent.id
-}
+# Note: Security group is managed by the EC2 module, not here
 
 output "iam_role_arn" {
   description = "ARN of the IAM role created for RKE agent nodes"

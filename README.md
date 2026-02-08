@@ -53,6 +53,12 @@ vpn_connection_info = {
   "server_ip" = "54.214.242.159"
 }
 ```
+
+**Important VPN Configuration:**
+- The OpenVPN client subnet is configured as `172.27.224.0/20`
+- This subnet is added to the RKE security groups to allow kubectl/k9s access from VPN-connected clients
+- If you change the VPN IP Network in the OpenVPN admin panel, you must also update the `cluster_cidr_blocks` in `RKE-cluster/dev-cluster/rke/main.tf`
+
 Get the ssh key from secret openvpn-ssh and save the private key to ~/.ssh/openvpn.pem
 ```bash
 chmod 600 ~/.ssh/openvpn.pem 
@@ -91,14 +97,38 @@ cd RKE-CLUSTER/dev-cluster/rke
 terraform apply
 ```
 
-## Step 7: Deploy Ingress and Applications
-Deploy the ingress stack (Traefik, External-DNS, Cert-Manager) and applications to the Kubernetes cluster.
+## Step 7: Configure kubectl Access
 
-First, copy the example configuration and update with your values:
+Before deploying applications, you need to configure kubectl access to the RKE cluster.
+
+**Important:** Make sure you're connected to the VPN before running this step.
+
+Run the setup script with **any one** of your RKE server internal IP addresses (from Step 6 output):
+```bash
+# Use any of your 3 RKE server IPs, for example:
+./scripts/setup-k9s.sh 10.8.17.181
+```
+
+This script will:
+- Copy the kubeconfig from the RKE server
+- Update the server URL
+- Rename the context to `dev-rke2`
+- Merge with your existing kubeconfig
+
+Verify access:
+```bash
+kubectl config use-context dev-rke2
+kubectl get nodes
+```
+
+## Step 8: Deploy Ingress and Applications
+
+Now deploy the ingress stack (Traefik, External-DNS, Cert-Manager) and applications to the Kubernetes cluster.
+
+First, update `terraform.tfvars` with your configuration:
 ```bash
 cd deployments/dev-cluster
-cp example.tfvars terraform.tfvars
-# Edit terraform.tfvars with your Route53 zone ID and domain
+# Edit terraform.tfvars with your VPC ID, Route53 zone ID, domain, and Let's Encrypt email
 ```
 
 Then deploy:
@@ -108,27 +138,15 @@ terraform apply
 ```
 
 This deploys:
-- Traefik ingress controller
-- External-DNS (automatic DNS records in Route53)
-- Cert-Manager (automatic TLS certificates from Let's Encrypt)
-- Sample nginx site at `https://www.dev.foobar.support`
+- **Traefik ingress controller** with dual load balancers (public + internal)
+- **External-DNS** (automatic DNS records in Route53)
+- **Cert-Manager** (automatic TLS certificates from Let's Encrypt)
+- **Sample nginx site** at `https://nginx.dev.foobar.support` (public)
+- **Traefik dashboard** at `https://traefik.dev.foobar.support` (internal, VPN required)
 
-## Step 8: Configure kubectl for k9s
+**Note:** The nginx site is publicly accessible. The Traefik dashboard requires VPN connection.
 
-Run the setup script with your RKE server IP address:
+You can monitor the deployment with k9s:
 ```bash
-./scripts/setup-k9s.sh 10.8.91.172
-```
-
-This script will:
-- Copy the kubeconfig from the RKE server
-- Update the server URL
-- Rename the context to `dev-rke2`
-- Merge with your existing kubeconfig
-
-Then you can use kubectl or k9s:
-```bash
-kubectl config use-context dev-rke2
-kubectl get nodes
 k9s
 ```

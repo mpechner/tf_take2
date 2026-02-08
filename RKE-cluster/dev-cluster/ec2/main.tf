@@ -8,6 +8,6 @@ module "rke-nodes" {
 
   server_hostnames = local.server_hostnames
   server_ami = data.aws_ami.ubuntu_2204.id
-  server_instance_type = "t3a.small"
+  server_instance_type = "t3a.large"
 
 }

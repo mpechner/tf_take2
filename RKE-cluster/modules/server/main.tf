@@ -1,89 +1,6 @@
 # RKE Server Module - Main Configuration
 # This module configures existing EC2 instances as RKE server (control plane) nodes using Ansible
-
-# Security group for RKE server nodes
-resource "aws_security_group" "rke_server" {
-  name_prefix = "${var.cluster_name}-rke-server-"
-  vpc_id      = var.vpc_id
-
-  # SSH access
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.ssh_cidr_blocks
-  }
-
-  # RKE required ports for control plane
-  ingress {
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 10250
-    to_port     = 10250
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 2379
-    to_port     = 2380
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 8472
-    to_port     = 8472
-    protocol    = "udp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 9099
-    to_port     = 9099
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  # Additional ports for control plane
-  ingress {
-    from_port   = 10251
-    to_port     = 10251
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 10252
-    to_port     = 10252
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  ingress {
-    from_port   = 10255
-    to_port     = 10255
-    protocol    = "tcp"
-    cidr_blocks = var.cluster_cidr_blocks
-  }
-
-  # All outbound traffic
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, {
-    Name = "${var.cluster_name}-rke-server-sg"
-  })
-}
+# Note: Security groups are managed by the EC2 module, not here
 
 # IAM role for RKE server nodes
 resource "aws_iam_role" "rke_server" {
@@ -213,6 +130,64 @@ resource "null_resource" "ansible_provision" {
       "ansible-galaxy collection install -r requirements.yml --force || true",
       "test -f rke-server-playbook.yml || { echo 'missing rke-server-playbook.yml in $(pwd)'; exit 1; }",
       "ANSIBLE_PYTHON_INTERPRETER=/usr/bin/python3 ansible-playbook -i 'localhost,' -c local rke-server-playbook.yml --extra-vars 'cluster_name=${var.cluster_name} region=${var.aws_region} ansible_user=${var.ansible_user}'"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = var.ansible_user
+      private_key = file(var.ansible_ssh_private_key_file)
+      host        = var.server_instance_ips[count.index]
+    }
+  }
+
+  # Health check: Wait for Kubernetes API server to be ready
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Waiting for Kubernetes API server to be ready...'",
+      "for i in $(seq 1 60); do",
+      "  if sudo kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml get nodes &>/dev/null; then",
+      "    echo 'API server is ready'",
+      "    break",
+      "  fi",
+      "  echo \"Waiting for API server... attempt $i/60\"",
+      "  sleep 5",
+      "done",
+      "sudo kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml get nodes || { echo 'API server not ready after 5 minutes'; exit 1; }"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = var.ansible_user
+      private_key = file(var.ansible_ssh_private_key_file)
+      host        = var.server_instance_ips[count.index]
+    }
+  }
+
+  # Health check: Wait for CNI to be deployed
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Waiting for CNI (Canal) pods to be running...'",
+      "sudo kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml wait --for=condition=Ready pod -l k8s-app=canal -n kube-system --timeout=300s || echo 'Warning: CNI pods not ready after 5 minutes'",
+      "echo 'Checking CNI pod status:'",
+      "sudo kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml get pods -n kube-system -l k8s-app=canal"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = var.ansible_user
+      private_key = file(var.ansible_ssh_private_key_file)
+      host        = var.server_instance_ips[count.index]
+    }
+  }
+
+  # Health check: Wait for control plane node to be Ready
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Waiting for control plane node to be Ready...'",
+      "sudo kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml wait --for=condition=Ready node --selector=node-role.kubernetes.io/control-plane=true --timeout=120s || echo 'Warning: Control plane node not ready after 2 minutes'",
+      "echo 'Final cluster status:'",
+      "sudo kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml get nodes",
+      "echo 'RKE2 server initialization complete'"
     ]
 
     connection {

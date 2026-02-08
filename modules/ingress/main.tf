@@ -205,9 +205,7 @@ resource "kubernetes_manifest" "letsencrypt_issuer" {
     }
     spec = {
       acme = {
-        server = var.letsencrypt_environment == "staging" ? 
-          "https://acme-staging-v02.api.letsencrypt.org/directory" : 
-          "https://acme-v02.api.letsencrypt.org/directory"
+        server = var.letsencrypt_environment == "staging" ? "https://acme-staging-v02.api.letsencrypt.org/directory" : "https://acme-v02.api.letsencrypt.org/directory"
         email = var.letsencrypt_email
         privateKeySecretRef = {
           name = "letsencrypt-${var.letsencrypt_environment}"

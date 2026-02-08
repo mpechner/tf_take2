@@ -131,6 +131,11 @@
         content: |
           token: {{ rke2_token.stdout | trim }}
           write-kubeconfig-mode: "0644"
+          tls-san:
+            - "{{ ansible_default_ipv4.address }}"
+          cluster-cidr: "10.42.0.0/16"
+          service-cidr: "10.43.0.0/16"
+          cni: "canal"
         mode: '0644'
 
     - name: Enable and start rke2-server

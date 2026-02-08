@@ -27,5 +27,5 @@ output "hostname" {
 
 output "url" {
   description = "Full URL of the site"
-  value       = var.cluster_issuer != null ? "https://${var.hostname}" : "http://${var.hostname}"
+  value       = "https://${var.hostname}"
 }

@@ -6,7 +6,7 @@ A few years ago I created a AWS eks env in this repo https://github.com/mpechner
 In the last 3 years working at a company that used kubernetes, what makes a reasonable environment 
 has matured.
 
-[Network Plan](Network-Plan.md)
+[Network Plan](VPC/Network-Plan.md)
 
 # Bootstrap
 
@@ -113,12 +113,22 @@ This deploys:
 - Cert-Manager (automatic TLS certificates from Let's Encrypt)
 - Sample nginx site at `https://www.dev.foobar.support`
 
-# k9s
-Change 10.8.91.172 to the correct IP address
+## Step 8: Configure kubectl for k9s
+
+Run the setup script with your RKE server IP address:
 ```bash
-scp -i ~/.ssh/rke-key ubuntu@10.8.91.172:/etc/rancher/rke2/rke2.yaml ~/.kube/dev-rke2.yaml
-sed -i '' 's|server: https://127.0.0.1:6443|server: https://10.8.91.172:6443|' ~/.kube/dev-rke2.yaml
-kubectl --kubeconfig ~/.kube/dev-rke2.yaml config rename-context rke2 dev-rke2
-KUBECONFIG="$HOME/.kube/config:$HOME/.kube/dev-rke2.yaml" kubectl config view --flatten > $HOME/.kube/merged
-mv $HOME/.kube/merged $HOME/.kube/config
+./scripts/setup-k9s.sh 10.8.91.172
+```
+
+This script will:
+- Copy the kubeconfig from the RKE server
+- Update the server URL
+- Rename the context to `dev-rke2`
+- Merge with your existing kubeconfig
+
+Then you can use kubectl or k9s:
+```bash
+kubectl config use-context dev-rke2
+kubectl get nodes
+k9s
 ```

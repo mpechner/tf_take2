@@ -113,7 +113,7 @@ resource "kubernetes_service_v1" "traefik_internal" {
       "service.beta.kubernetes.io/aws-load-balancer-internal"            = "true"
       "service.beta.kubernetes.io/aws-load-balancer-scheme"              = "internal"
       "service.beta.kubernetes.io/aws-load-balancer-subnets"             = join(",", data.aws_subnets.private.ids)
-      "external-dns.alpha.kubernetes.io/hostname"                        = "traefik.${var.route53_domain},rke.${var.route53_domain}"
+      "external-dns.alpha.kubernetes.io/hostname"                        = "traefik.${var.route53_domain},rancher.${var.route53_domain}"
     }
   }
 

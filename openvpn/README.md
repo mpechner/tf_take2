@@ -67,7 +67,48 @@ Visit: `https://YOUR_SERVER_IP:943/admin`
 - Username: `openvpn`
 - Password: `openvpn`
 
-### 5. Download Client Configurations
+### 5. Configure DNS for Internal Service Resolution
+
+For clients to resolve internal AWS services and private hosted zones, configure DNS settings in the OpenVPN Admin interface:
+
+**Steps:**
+1. Navigate to: `https://YOUR_SERVER_IP:943/admin`
+2. Go to **Configuration** → **VPN Settings** → **DNS Settings**
+3. Configure the following:
+
+**DNS Settings:**
+- ☑ **Have clients use specific DNS servers**
+- **Primary DNS Server**: `10.8.0.2` (AWS VPC DNS resolver for dev VPC)
+- **Secondary DNS Server**: `8.8.8.8` (Google DNS for internet domains)
+
+**DNS Resolution Zones (Optional):**
+- **DNS zones**: `foobar.support` (replace with your internal domain)
+  
+  This ensures VPN clients can resolve:
+  - `nginx.dev.foobar.support` → internal NLB IPs
+  - `traefik.dev.foobar.support` → internal dashboard
+  - `rancher.dev.foobar.support` → Kubernetes management UI
+  - Any other services using your private Route53 hosted zone
+
+**Important:** Make sure "Do not alter clients' DNS server settings" is **UNCHECKED**.
+
+**VPC-Specific DNS Resolvers:**
+Different VPCs use different DNS resolver IPs. The DNS server is always at `VPC_CIDR + 2`:
+- **Dev VPC** (`10.8.0.0/16`): DNS at `10.8.0.2`
+- **Staging VPC** (`10.4.0.0/16`): DNS at `10.4.0.2`
+- **Prod VPC** (`10.0.0.0/16`): DNS at `10.0.0.2`
+- **Test VPC** (`10.12.0.0/16`): DNS at `10.12.0.2`
+
+**After Configuration:**
+1. Save and Update Running Server
+2. Reconnect your VPN client
+3. Test DNS resolution:
+   ```bash
+   dig nginx.dev.foobar.support
+   # Should return private IPs like 10.8.x.x
+   ```
+
+### 6. Download Client Configurations
 Visit: `https://YOUR_SERVER_IP:944/`
 
 ## 📁 Project Structure
@@ -161,6 +202,44 @@ curl ipinfo.io/ip
 ```
 
 ### Common Issues
+
+#### DNS Not Resolving Internal Domains
+
+If you can't access internal services (e.g., `nginx.dev.foobar.support`):
+
+1. **Verify VPN DNS Configuration:**
+   ```bash
+   # On macOS/Linux, check if VPN pushed DNS settings
+   scutil --dns | grep "nameserver\|domain"
+   
+   # Should show 10.8.0.2 (or your VPC's DNS) as a nameserver
+   ```
+
+2. **Test DNS Resolution:**
+   ```bash
+   # Should return private IPs (10.8.x.x)
+   dig nginx.dev.foobar.support
+   
+   # If it returns NXDOMAIN, DNS settings weren't pushed
+   ```
+
+3. **Reconnect VPN:**
+   - Disconnect and reconnect your VPN client
+   - DNS settings are only applied on connection
+
+4. **Check OpenVPN Admin Settings:**
+   - Verify "Have clients use specific DNS servers" is checked
+   - Verify Primary DNS Server is set to `10.8.0.2`
+   - Verify "Do not alter clients' DNS server settings" is **UNCHECKED**
+   - Click "Save Settings" and "Update Running Server"
+
+5. **Manual DNS Test (from VPN):**
+   ```bash
+   # Query AWS VPC DNS directly
+   nslookup nginx.dev.foobar.support 10.8.0.2
+   
+   # Should return private IPs
+   ```
 
 #### SSH Connection Failed
 - Check security group allows SSH from your IP

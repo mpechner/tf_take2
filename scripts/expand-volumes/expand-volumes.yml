@@ -1,0 +1,204 @@
+---
+# Ansible playbook to expand root volumes on RKE nodes
+# Usage: ansible-playbook -i inventory.ini expand-volumes.yml
+#
+# This playbook:
+# 1. Uses AWS CLI to expand EBS volumes from 8GB to 40GB
+# 2. Expands the partition on each node
+# 3. Resizes the filesystem
+
+- name: Expand Root Volumes on RKE Nodes
+  hosts: localhost
+  gather_facts: no
+  vars:
+    aws_region: us-west-2
+    target_size_gb: 40
+    terraform_role_arn: "arn:aws:iam::364082771643:role/terraform-execute"
+  
+  tasks:
+    - name: Assume AWS role
+      shell: |
+        aws sts assume-role \
+          --role-arn "{{ terraform_role_arn }}" \
+          --role-session-name "ansible-expand-volumes" \
+          --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+          --output text
+      register: aws_creds
+      changed_when: false
+
+    - name: Set AWS credentials as facts
+      set_fact:
+        aws_access_key: "{{ aws_creds.stdout.split()[0] }}"
+        aws_secret_key: "{{ aws_creds.stdout.split()[1] }}"
+        aws_session_token: "{{ aws_creds.stdout.split()[2] }}"
+
+    - name: Get all RKE instances
+      shell: |
+        export AWS_ACCESS_KEY_ID="{{ aws_access_key }}"
+        export AWS_SECRET_ACCESS_KEY="{{ aws_secret_key }}"
+        export AWS_SESSION_TOKEN="{{ aws_session_token }}"
+        
+        aws ec2 describe-instances \
+          --region {{ aws_region }} \
+          --filters "Name=tag:Name,Values=server_*,agent_*" "Name=instance-state-name,Values=running" \
+          --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PrivateIpAddress,BlockDeviceMappings[?DeviceName==`/dev/sda1`].Ebs.VolumeId|[0]]' \
+          --output json
+      register: instances_raw
+      changed_when: false
+
+    - name: Parse instance data
+      set_fact:
+        instances: "{{ instances_raw.stdout | from_json | map('zip', ['instance_id', 'name', 'private_ip', 'volume_id']) | map('items2dict') | list }}"
+
+    - name: Display instances to be processed
+      debug:
+        msg: "Found {{ instances | length }} instances: {{ instances | map(attribute='name') | join(', ') }}"
+
+    - name: Check current volume sizes
+      shell: |
+        export AWS_ACCESS_KEY_ID="{{ aws_access_key }}"
+        export AWS_SECRET_ACCESS_KEY="{{ aws_secret_key }}"
+        export AWS_SESSION_TOKEN="{{ aws_session_token }}"
+        
+        aws ec2 describe-volumes \
+          --region {{ aws_region }} \
+          --volume-ids {{ item.volume_id }} \
+          --query 'Volumes[0].Size' \
+          --output text
+      loop: "{{ instances }}"
+      register: current_sizes
+      changed_when: false
+
+    - name: Expand EBS volumes
+      shell: |
+        export AWS_ACCESS_KEY_ID="{{ aws_access_key }}"
+        export AWS_SECRET_ACCESS_KEY="{{ aws_secret_key }}"
+        export AWS_SESSION_TOKEN="{{ aws_session_token }}"
+        
+        CURRENT_SIZE=$(aws ec2 describe-volumes \
+          --region {{ aws_region }} \
+          --volume-ids {{ item.volume_id }} \
+          --query 'Volumes[0].Size' \
+          --output text)
+        
+        if [ "$CURRENT_SIZE" -lt "{{ target_size_gb }}" ]; then
+          echo "Expanding volume {{ item.volume_id }} from ${CURRENT_SIZE}GB to {{ target_size_gb }}GB"
+          aws ec2 modify-volume \
+            --region {{ aws_region }} \
+            --volume-id {{ item.volume_id }} \
+            --size {{ target_size_gb }}
+          echo "EXPANDED"
+        else
+          echo "Volume already >= {{ target_size_gb }}GB, skipping"
+          echo "SKIPPED"
+        fi
+      loop: "{{ instances }}"
+      register: volume_expansions
+
+    - name: Wait for volume modifications to complete
+      shell: |
+        export AWS_ACCESS_KEY_ID="{{ aws_access_key }}"
+        export AWS_SECRET_ACCESS_KEY="{{ aws_secret_key }}"
+        export AWS_SESSION_TOKEN="{{ aws_session_token }}"
+        
+        for i in {1..60}; do
+          STATE=$(aws ec2 describe-volumes-modifications \
+            --region {{ aws_region }} \
+            --volume-ids {{ item.item.volume_id }} \
+            --query 'VolumesModifications[0].ModificationState' \
+            --output text 2>/dev/null || echo "none")
+          
+          if [ "$STATE" == "completed" ] || [ "$STATE" == "optimizing" ] || [ "$STATE" == "none" ]; then
+            echo "Volume modification complete"
+            exit 0
+          elif [ "$STATE" == "failed" ]; then
+            echo "Volume modification failed"
+            exit 1
+          fi
+          
+          sleep 5
+        done
+        
+        echo "Timeout waiting for volume modification"
+        exit 1
+      loop: "{{ volume_expansions.results }}"
+      when: "'EXPANDED' in item.stdout"
+      register: wait_results
+
+- name: Expand Partitions and Filesystems on Nodes
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Show current disk usage
+      command: df -h /
+      register: disk_before
+      changed_when: false
+
+    - name: Display current disk usage
+      debug:
+        msg: "{{ disk_before.stdout_lines }}"
+
+    - name: Detect root device
+      shell: |
+        if [ -b /dev/nvme0n1 ]; then
+          echo "nvme"
+        elif [ -b /dev/xvda ]; then
+          echo "xvd"
+        else
+          echo "unknown"
+        fi
+      register: device_type
+      changed_when: false
+
+    - name: Grow partition (NVMe)
+      command: growpart /dev/nvme0n1 1
+      when: device_type.stdout == "nvme"
+      register: growpart_nvme
+      failed_when: false
+      changed_when: "'CHANGED' in growpart_nvme.stdout or growpart_nvme.rc == 0"
+
+    - name: Grow partition (Xen)
+      command: growpart /dev/xvda 1
+      when: device_type.stdout == "xvd"
+      register: growpart_xvd
+      failed_when: false
+      changed_when: "'CHANGED' in growpart_xvd.stdout or growpart_xvd.rc == 0"
+
+    - name: Resize ext4 filesystem (NVMe)
+      command: resize2fs /dev/nvme0n1p1
+      when: device_type.stdout == "nvme"
+      register: resize_nvme
+
+    - name: Resize ext4 filesystem (Xen)
+      command: resize2fs /dev/xvda1
+      when: device_type.stdout == "xvd"
+      register: resize_xvd
+
+    - name: Show new disk usage
+      command: df -h /
+      register: disk_after
+      changed_when: false
+
+    - name: Display new disk usage
+      debug:
+        msg: "{{ disk_after.stdout_lines }}"
+
+    - name: Verify expansion
+      shell: |
+        BEFORE=$(echo "{{ disk_before.stdout }}" | awk 'NR==2 {print $2}')
+        AFTER=$(df -h / | awk 'NR==2 {print $2}')
+        echo "Before: $BEFORE"
+        echo "After: $AFTER"
+        if [ "$BEFORE" != "$AFTER" ]; then
+          echo "✅ Filesystem successfully expanded"
+        else
+          echo "⚠️  Filesystem size unchanged"
+        fi
+      register: verify
+      changed_when: false
+
+    - name: Show verification result
+      debug:
+        msg: "{{ verify.stdout_lines }}"

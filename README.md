@@ -150,18 +150,12 @@ kubectl config use-context dev-rke2
 kubectl get nodes
 ```
 
-## Step 8: Deploy Ingress and Applications
+## Step 8: Deploy Infrastructure Components
 
-Now deploy the ingress stack (Traefik, External-DNS, Cert-Manager) and applications to the Kubernetes cluster.
+Deploy the core Kubernetes infrastructure (Traefik, External-DNS, Cert-Manager, AWS Load Balancer Controller).
 
-First, update `terraform.tfvars` with your configuration:
 ```bash
-cd deployments/dev-cluster
-# Edit terraform.tfvars with your VPC ID, Route53 zone ID, domain, and Let's Encrypt email
-```
-
-Then deploy:
-```bash
+cd deployments/dev-cluster/1-infrastructure
 terraform init
 terraform apply
 ```
@@ -170,10 +164,26 @@ This deploys:
 - **Traefik ingress controller** with dual load balancers (public + internal)
 - **External-DNS** (automatic DNS records in Route53)
 - **Cert-Manager** (automatic TLS certificates from Let's Encrypt)
+- **AWS Load Balancer Controller** (manages NLBs for LoadBalancer services)
+
+Wait for all infrastructure components to be ready (2-3 minutes).
+
+## Step 9: Deploy Applications
+
+Now deploy applications (Rancher, Nginx sample, Traefik Dashboard).
+
+```bash
+cd ../2-applications
+terraform init
+terraform apply
+```
+
+This deploys:
+- **Rancher** at `https://rancher.dev.foobar.support` (Kubernetes management UI)
 - **Sample nginx site** at `https://nginx.dev.foobar.support` (public)
 - **Traefik dashboard** at `https://traefik.dev.foobar.support` (internal, VPN required)
 
-**Note:** The nginx site is publicly accessible. The Traefik dashboard requires VPN connection.
+**Note:** The nginx site is publicly accessible. The Traefik dashboard and Rancher require VPN connection.
 
 You can monitor the deployment with k9s:
 ```bash

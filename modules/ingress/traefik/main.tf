@@ -15,47 +15,36 @@ resource "helm_release" "traefik" {
   namespace        = var.namespace
   create_namespace = var.create_namespace
 
-  # Common default to expose Traefik
-  set {
-    name  = "service.type"
-    value = var.service_type
-  }
-
-  # Enable Dashboard and API
-  set {
-    name  = "dashboard.enabled"
-    value = "true"
-  }
-
-  set {
-    name  = "api.dashboard"
-    value = "true"
-  }
-
-  set {
-    name  = "api.insecure"
-    value = "true"
-  }
-
-  # Expose ports
-  set {
-    name  = "ports.web.expose"
-    value = "true"
-  }
-
-  set {
-    name  = "ports.websecure.expose"
-    value = "true"
-  }
-
-  dynamic "set" {
-    for_each = var.set
-    content {
-      name  = set.value.name
-      value = set.value.value
-      type  = try(set.value.type, null)
-    }
-  }
+  # Combine default configuration with user-provided set values
+  set = concat(
+    [
+      {
+        name  = "service.type"
+        value = var.service_type
+      },
+      {
+        name  = "dashboard.enabled"
+        value = "true"
+      },
+      {
+        name  = "api.dashboard"
+        value = "true"
+      },
+      {
+        name  = "api.insecure"
+        value = "true"
+      },
+      {
+        name  = "ports.web.expose"
+        value = "true"
+      },
+      {
+        name  = "ports.websecure.expose"
+        value = "true"
+      }
+    ],
+    var.set
+  )
 
   values = var.values
 }

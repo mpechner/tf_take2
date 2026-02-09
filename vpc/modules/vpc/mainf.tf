@@ -34,6 +34,9 @@ module "vpc" {
   redshift_subnets    = []
   intra_subnets       = []
 
+  # Disable auto-assign public IP on private subnets
+  map_public_ip_on_launch = false
+
   private_subnet_names = var.private_subnet_names
   public_subnet_names  = var.public_subnet_names
   database_subnet_names    = var.db_subnet_names

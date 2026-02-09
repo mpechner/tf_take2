@@ -9,6 +9,7 @@ provider "aws" {
     tags = {
       Environment = var.environment
       ManagedBy   = "terraform"
+      Stage       = "1-infrastructure"
     }
   }
 }
@@ -18,7 +19,7 @@ provider "kubernetes" {
 }
 
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     config_path = var.kubeconfig_path
   }
 }
@@ -32,7 +33,7 @@ data "aws_subnets" "public" {
 
   filter {
     name   = "tag:Name"
-    values = ["*public*"]
+    values = ["*pub*"]  # Changed from *public* to *pub*
   }
 
   filter {
@@ -46,15 +47,9 @@ data "aws_subnets" "private" {
     name   = "vpc-id"
     values = [var.vpc_id]
   }
-
+  
   filter {
     name   = "tag:Name"
-    values = ["*private*"]
-  }
-
-  filter {
-    name   = "cidr-block"
-    values = ["10.8.16.0/20", "10.8.80.0/20", "10.8.144.0/20"]
+    values = ["*priv*"]  # Use wildcard on both sides
   }
 }
-

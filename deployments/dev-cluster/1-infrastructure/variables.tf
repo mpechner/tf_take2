@@ -55,3 +55,20 @@ variable "letsencrypt_environment" {
   description = "prod or staging"
 }
 
+variable "cluster_name" {
+  type        = string
+  default     = "dev-cluster"
+  description = "Name of the Kubernetes cluster"
+}
+
+variable "attach_to_node_role" {
+  type        = bool
+  default     = true
+  description = "Whether to automatically attach the LB controller policy to the node IAM role"
+}
+
+variable "node_iam_role_name" {
+  type        = string
+  default     = "rke-nodes-role"
+  description = "Name of the RKE server node IAM role (required if attach_to_node_role is true)"
+}

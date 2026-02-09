@@ -15,19 +15,13 @@ resource "helm_release" "cert_manager" {
   namespace        = var.namespace
   create_namespace = var.create_namespace
 
-  set {
-    name  = "installCRDs"
-    value = var.install_crds ? "true" : "false"
-  }
-
-  dynamic "set" {
-    for_each = var.set
-    content {
-      name  = set.value.name
-      value = set.value.value
-      type  = try(set.value.type, null)
-    }
-  }
+  set = concat(
+    [{
+      name  = "installCRDs"
+      value = var.install_crds ? "true" : "false"
+    }],
+    var.set
+  )
 
   values = var.values
 }

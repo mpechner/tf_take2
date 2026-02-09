@@ -4,69 +4,13 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = ">= 2.23"
     }
-    helm = {
-      source  = "hashicorp/helm"
-      version = ">= 2.12"
-    }
   }
 }
 
 locals {
-  external_dns_set = concat(var.external_dns_set, [
-    {
-      name  = "provider"
-      value = "aws"
-      type  = "string"
-    },
-    {
-      name  = "aws.region"
-      value = var.aws_region
-      type  = "string"
-    },
-    {
-      name  = "aws.zoneType"
-      value = "public"
-      type  = "string"
-    },
-    {
-      name  = "policy"
-      value = "upsert-only"
-      type  = "string"
-    },
-    {
-      name  = "registry"
-      value = "txt"
-      type  = "string"
-    },
-    {
-      name  = "txt-owner-id"
-      value = "external-dns"
-      type  = "string"
-    }
-  ], var.route53_assume_role_arn != null ? [
-    {
-      name  = "aws.assumeRoleArn"
-      value = var.route53_assume_role_arn
-      type  = "string"
-    }
-  ] : [])
-
-  route53_solver = merge(
-    { region = var.aws_region },
-    var.route53_zone_id != "" ? { hostedZoneID = var.route53_zone_id } : {},
-    var.route53_assume_role_arn != null ? { role = var.route53_assume_role_arn } : {}
-  )
-
   # Group ingresses by namespace for backend TLS resources
   namespaces = toset([for k, v in var.ingresses : try(v.namespace, "default")])
   
-  ingresses_by_namespace = {
-    for ns in local.namespaces : ns => {
-      for name, ingress in var.ingresses : name => ingress
-      if try(ingress.namespace, "default") == ns
-    }
-  }
-
   ingresses = {
     for name, ingress in var.ingresses : name => {
       name               = name
@@ -89,114 +33,8 @@ locals {
   }
 }
 
-module "traefik" {
-  count = var.traefik_enabled ? 1 : 0
-  source = "./traefik"
-
-  name             = var.traefik_name
-  namespace        = var.traefik_namespace
-  create_namespace = var.traefik_create_namespace
-  repository       = var.traefik_repository
-  chart            = var.traefik_chart
-  chart_version    = var.traefik_chart_version
-  service_type     = var.traefik_service_type
-  set              = concat(var.traefik_set, [
-    {
-      name  = "service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type"
-      value = "nlb"
-      type  = "string"
-    },
-    {
-      name  = "service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"
-      value = "internet-facing"
-      type  = "string"
-    }
-  ], length(var.public_subnets) > 0 ? [
-    {
-      name  = "service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-subnets"
-      value = join("\\,", var.public_subnets)
-      type  = "string"
-    }
-  ] : [])
-  values           = var.traefik_values
-}
-
-# Additional service for internal-only access (separate internal ALB)
-resource "kubernetes_service_v1" "traefik_internal" {
-  count = var.traefik_enabled && var.enable_internal_alb ? 1 : 0
-
-  metadata {
-    name      = "traefik-internal"
-    namespace = var.traefik_namespace
-    annotations = merge(
-      {
-        "service.beta.kubernetes.io/aws-load-balancer-type"     = "nlb"
-        "service.beta.kubernetes.io/aws-load-balancer-internal" = "true"
-        "service.beta.kubernetes.io/aws-load-balancer-scheme"   = "internal"
-        "external-dns.alpha.kubernetes.io/hostname"             = join(",", var.internal_service_domains)
-      },
-      length(var.private_subnets) > 0 ? {
-        "service.beta.kubernetes.io/aws-load-balancer-subnets" = join(",", var.private_subnets)
-      } : {}
-    )
-  }
-
-  spec {
-    type = "LoadBalancer"
-    selector = {
-      "app.kubernetes.io/name"     = "traefik"
-      "app.kubernetes.io/instance" = var.traefik_name
-    }
-    port {
-      name        = "web"
-      port        = 80
-      target_port = "web"
-      protocol    = "TCP"
-    }
-    port {
-      name        = "websecure"
-      port        = 443
-      target_port = "websecure"
-      protocol    = "TCP"
-    }
-  }
-
-  depends_on = [module.traefik]
-}
-
-module "external_dns" {
-  count = var.external_dns_enabled ? 1 : 0
-  source = "./external-dns"
-
-  name             = var.external_dns_name
-  namespace        = var.external_dns_namespace
-  create_namespace = var.external_dns_create_namespace
-  repository       = var.external_dns_repository
-  chart            = var.external_dns_chart
-  chart_version    = var.external_dns_chart_version
-  set              = local.external_dns_set
-  values           = var.external_dns_values
-}
-
-module "cert_manager" {
-  count = var.cert_manager_enabled ? 1 : 0
-  source = "./cert-manager"
-
-  name             = var.cert_manager_name
-  namespace        = var.cert_manager_namespace
-  create_namespace = var.cert_manager_create_namespace
-  repository       = var.cert_manager_repository
-  chart            = var.cert_manager_chart
-  chart_version    = var.cert_manager_chart_version
-  install_crds     = var.cert_manager_install_crds
-  set              = var.cert_manager_set
-  values           = var.cert_manager_values
-}
-
 # Create ClusterIssuer for Let's Encrypt
 resource "kubernetes_manifest" "letsencrypt_issuer" {
-  count = var.cert_manager_enabled ? 1 : 0
-
   manifest = {
     apiVersion = "cert-manager.io/v1"
     kind       = "ClusterIssuer"
@@ -213,7 +51,9 @@ resource "kubernetes_manifest" "letsencrypt_issuer" {
         solvers = [
           {
             dns01 = {
-              route53 = local.route53_solver
+              route53 = {
+                region = var.aws_region
+              }
             }
             selector = {
               dnsNames = []
@@ -223,66 +63,10 @@ resource "kubernetes_manifest" "letsencrypt_issuer" {
       }
     }
   }
-
-  depends_on = [
-    module.cert_manager,
-    null_resource.wait_for_cert_manager_crds
-  ]
 }
 
-# Wait for cert-manager CRDs to be registered
-resource "null_resource" "wait_for_cert_manager_crds" {
-  count = var.cert_manager_enabled ? 1 : 0
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Waiting for cert-manager CRDs to be ready..."
-      for i in {1..60}; do
-        if kubectl get crd clusterissuers.cert-manager.io 2>/dev/null; then
-          echo "cert-manager CRDs are ready"
-          exit 0
-        fi
-        echo "Waiting for CRDs... attempt $i/60"
-        sleep 5
-      done
-      echo "Timeout waiting for cert-manager CRDs"
-      exit 1
-    EOT
-  }
-
-  depends_on = [
-    module.cert_manager,
-    null_resource.wait_for_cert_manager_crds
-  ]
-}
-
-# Wait for Traefik CRDs to be registered
-resource "null_resource" "wait_for_traefik_crds" {
-  count = var.traefik_enabled ? 1 : 0
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Waiting for Traefik CRDs to be ready..."
-      for i in {1..60}; do
-        if kubectl get crd middlewares.traefik.io 2>/dev/null; then
-          echo "Traefik CRDs are ready"
-          exit 0
-        fi
-        echo "Waiting for CRDs... attempt $i/60"
-        sleep 5
-      done
-      echo "Timeout waiting for Traefik CRDs"
-      exit 1
-    EOT
-  }
-
-  depends_on = [module.traefik]
-}
-
-# Enable Traefik Dashboard
+# Traefik Dashboard Middleware
 resource "kubernetes_manifest" "traefik_dashboard_middleware" {
-  count = var.traefik_enabled ? 1 : 0
-
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
     kind       = "Middleware"
@@ -296,17 +80,10 @@ resource "kubernetes_manifest" "traefik_dashboard_middleware" {
       }
     }
   }
-
-  depends_on = [
-    module.traefik,
-    null_resource.wait_for_traefik_crds
-  ]
 }
 
 # Traefik Dashboard IngressRoute (internal-only)
 resource "kubernetes_manifest" "traefik_dashboard_ingressroute" {
-  count = var.traefik_enabled ? 1 : 0
-
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
     kind       = "IngressRoute"
@@ -333,17 +110,10 @@ resource "kubernetes_manifest" "traefik_dashboard_ingressroute" {
       }
     }
   }
-
-  depends_on = [
-    module.traefik,
-    null_resource.wait_for_traefik_crds
-  ]
 }
 
 # Certificate for Traefik Dashboard
 resource "kubernetes_manifest" "traefik_dashboard_cert" {
-  count = var.traefik_enabled && var.cert_manager_enabled ? 1 : 0
-
   manifest = {
     apiVersion = "cert-manager.io/v1"
     kind       = "Certificate"
@@ -384,10 +154,7 @@ resource "kubernetes_manifest" "backend_ca_issuer" {
     }
   }
 
-  depends_on = [
-    module.cert_manager,
-    null_resource.wait_for_cert_manager_crds
-  ]
+  depends_on = [kubernetes_manifest.letsencrypt_issuer]
 }
 
 # CA Certificate for backend TLS (per namespace)
@@ -567,11 +334,7 @@ resource "kubernetes_manifest" "managed_ingress" {
   }
 
   depends_on = [
-    module.traefik,
-    module.cert_manager,
     kubernetes_manifest.backend_transport,
     kubernetes_manifest.backend_cert
   ]
 }
-
-

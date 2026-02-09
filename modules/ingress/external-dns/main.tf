@@ -42,14 +42,7 @@ resource "helm_release" "external_dns" {
   namespace        = var.namespace
   create_namespace = var.create_namespace
 
-  dynamic "set" {
-    for_each = var.set
-    content {
-      name  = set.value.name
-      value = set.value.value
-      type  = try(set.value.type, null)
-    }
-  }
+  set = var.set
 
   values = var.values
 }

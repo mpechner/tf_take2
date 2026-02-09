@@ -121,6 +121,7 @@
         content: |
           token: {{ rke2_token.stdout | trim }}
           server: https://{{ server_endpoint }}:9345
+          cloud-provider-name: "aws"
         mode: '0644'
 
     - name: Enable and start rke2-agent

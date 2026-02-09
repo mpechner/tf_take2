@@ -50,11 +50,30 @@ resource "aws_security_group" "nodes" {
     cidr_blocks = [local.vpc_cidr_resolved]
   }
 
+  # HTTP/HTTPS for Traefik ingress (from internet, VPC, and VPN)
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP from internet for public NLB"
+  }
+
   ingress {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS from internet for public NLB"
+  }
+
+  # NodePort range for LoadBalancer services (NLB forwards to NodePorts)
+  ingress {
+    from_port   = 30000
+    to_port     = 32767
+    protocol    = "tcp"
     cidr_blocks = [local.vpc_cidr_resolved]
+    description = "NodePort range for LoadBalancer services"
   }
 
   egress {
@@ -78,6 +97,13 @@ resource "aws_instance" "server_rke_nodes" {
   iam_instance_profile = var.instance_profile_name != "" ? var.instance_profile_name : aws_iam_instance_profile.nodes[0].name
   vpc_security_group_ids = [aws_security_group.nodes.id]
 
+  root_block_device {
+    volume_size           = 40
+    volume_type           = "gp3"
+    delete_on_termination = true
+    encrypted             = false
+  }
+
   tags = {
     Name = each.key
   }
@@ -100,6 +126,13 @@ resource "aws_instance" "agent_rke_nodes" {
   key_name      = var.ec2_ssh_key
   iam_instance_profile = var.instance_profile_name != "" ? var.instance_profile_name : aws_iam_instance_profile.nodes[0].name
   vpc_security_group_ids = [aws_security_group.nodes.id]
+
+  root_block_device {
+    volume_size           = 40
+    volume_type           = "gp3"
+    delete_on_termination = true
+    encrypted             = false
+  }
 
   tags = {
     Name = each.key
@@ -144,6 +177,28 @@ resource "aws_iam_role_policy" "secretsmanager_access" {
   name  = "rke-nodes-secretsmanager-access"
   role  = aws_iam_role.nodes[0].id
   policy = file("${path.module}/policies/secretsmanager-access-policy.json")
+}
+
+resource "aws_iam_role_policy" "route53_access" {
+  count = var.instance_profile_name == "" ? 1 : 0
+  name  = "rke-nodes-route53-access"
+  role  = aws_iam_role.nodes[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets",
+          "route53:ListHostedZones",
+          "route53:ListResourceRecordSets",
+          "route53:GetChange",
+          "route53:ListHostedZonesByName"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 resource "aws_iam_instance_profile" "nodes" {

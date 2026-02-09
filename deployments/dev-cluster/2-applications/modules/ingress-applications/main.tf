@@ -18,15 +18,15 @@ locals {
       host               = ingress.host
       service_name       = ingress.service_name
       service_port       = ingress.service_port
-      path               = try(ingress.path, "/")
-      path_type          = try(ingress.path_type, "Prefix")
-      ingress_class_name = try(ingress.ingress_class_name, "traefik")
+      path               = ingress.path != null ? ingress.path : "/"
+      path_type          = ingress.path_type != null ? ingress.path_type : "Prefix"
+      ingress_class_name = ingress.ingress_class_name != null ? ingress.ingress_class_name : "traefik"
       tls_secret_name = (
         try(ingress.tls_secret_name, null) != null
         ? ingress.tls_secret_name
         : (try(ingress.cluster_issuer, null) != null ? "${name}-tls" : null)
       )
-      backend_tls_enabled = try(ingress.backend_tls_enabled, true)
+      backend_tls_enabled = ingress.backend_tls_enabled != null ? ingress.backend_tls_enabled : true
       cluster_issuer = try(ingress.cluster_issuer, null)
       annotations    = try(ingress.annotations, {})
     }
@@ -63,78 +63,6 @@ resource "kubernetes_manifest" "letsencrypt_issuer" {
       }
     }
   }
-}
-
-# Traefik Dashboard Middleware
-resource "kubernetes_manifest" "traefik_dashboard_middleware" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "traefik-auth"
-      namespace = var.traefik_namespace
-    }
-    spec = {
-      basicAuth = {
-        secret = "traefik-auth-secret"
-      }
-    }
-  }
-}
-
-# Traefik Dashboard IngressRoute (internal-only)
-resource "kubernetes_manifest" "traefik_dashboard_ingressroute" {
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "IngressRoute"
-    metadata = {
-      name      = "traefik-dashboard"
-      namespace = var.traefik_namespace
-    }
-    spec = {
-      entryPoints = ["websecure"]
-      routes = [
-        {
-          match = "Host(`traefik.${var.route53_domain}`)"
-          kind  = "Rule"
-          services = [
-            {
-              name = "api@internal"
-              kind = "TraefikService"
-            }
-          ]
-        }
-      ]
-      tls = {
-        secretName = "traefik-dashboard-tls"
-      }
-    }
-  }
-}
-
-# Certificate for Traefik Dashboard
-resource "kubernetes_manifest" "traefik_dashboard_cert" {
-  manifest = {
-    apiVersion = "cert-manager.io/v1"
-    kind       = "Certificate"
-    metadata = {
-      name      = "traefik-dashboard-tls"
-      namespace = var.traefik_namespace
-    }
-    spec = {
-      secretName = "traefik-dashboard-tls"
-      dnsNames = [
-        "traefik.${var.route53_domain}"
-      ]
-      issuerRef = {
-        name  = "letsencrypt-${var.letsencrypt_environment}"
-        kind  = "ClusterIssuer"
-        group = "cert-manager.io"
-      }
-    }
-  }
-
-  depends_on = [kubernetes_manifest.letsencrypt_issuer]
 }
 
 # Backend TLS Infrastructure (per namespace)
@@ -288,6 +216,9 @@ resource "kubernetes_manifest" "managed_ingress" {
       namespace = each.value.namespace
       annotations = merge(
         each.value.annotations,
+        {
+          "external-dns.alpha.kubernetes.io/hostname" = each.value.host
+        },
         each.value.cluster_issuer != null ? {
           "cert-manager.io/cluster-issuer" = each.value.cluster_issuer
         } : {},
@@ -299,7 +230,7 @@ resource "kubernetes_manifest" "managed_ingress" {
     }
     spec = merge(
       {
-        ingressClassName = each.value.ingress_class_name
+        ingressClassName = each.value.ingress_class_name != null ? each.value.ingress_class_name : null
         rules = [
           {
             host = each.value.host

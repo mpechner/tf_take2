@@ -4,7 +4,7 @@ module "rke-nodes" {
   subnet_ids = data.aws_subnets.node_subnets.ids
   agent_hostnames = local.agent_hostnames
   agent_ami = data.aws_ami.ubuntu_2204.id
-  agent_instance_type = "t3a.small"
+  agent_instance_type = "t3a.large"
 
   server_hostnames = local.server_hostnames
   server_ami = data.aws_ami.ubuntu_2204.id

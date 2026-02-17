@@ -21,6 +21,8 @@ module "cert_manager" {
   install_crds     = true
   set              = []
   values           = []
+
+  depends_on = [helm_release.aws_load_balancer_controller, null_resource.wait_for_aws_lb_controller]
 }
 
 # Deploy external-dns in its own namespace
@@ -66,6 +68,8 @@ module "external_dns" {
     }
   ]
   values = []
+
+  depends_on = [helm_release.aws_load_balancer_controller, null_resource.wait_for_aws_lb_controller]
 }
 
 # Deploy Traefik ingress controller in its own namespace
@@ -101,6 +105,8 @@ module "traefik" {
       }
     }
   })]
+
+  depends_on = [helm_release.aws_load_balancer_controller, null_resource.wait_for_aws_lb_controller]
 }
 
 # Additional internal service for Traefik dashboard and RKE server access
@@ -139,4 +145,33 @@ resource "kubernetes_service_v1" "traefik_internal" {
   }
 
   depends_on = [module.traefik]
+}
+
+# Wait for AWS Load Balancer Controller webhook to be ready
+resource "null_resource" "wait_for_aws_lb_controller" {
+  triggers = {
+    # Re-trigger the wait if AWS LB controller helm release changes
+    alb_controller_id = helm_release.aws_load_balancer_controller.id
+    alb_controller_version = helm_release.aws_load_balancer_controller.version
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for AWS Load Balancer Controller webhook to be ready..."
+      for i in {1..60}; do
+        ENDPOINTS=$(kubectl get endpoints -n kube-system aws-load-balancer-webhook-service -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | wc -w)
+        if [ $ENDPOINTS -gt 0 ]; then
+          echo "AWS Load Balancer Controller webhook is ready"
+          sleep 5  # Additional buffer for webhook to fully initialize
+          exit 0
+        fi
+        echo "Waiting for webhook endpoints... attempt $i/60"
+        sleep 2
+      done
+      echo "Timeout waiting for AWS Load Balancer Controller webhook"
+      exit 1
+    EOT
+  }
+
+  depends_on = [helm_release.aws_load_balancer_controller]
 }

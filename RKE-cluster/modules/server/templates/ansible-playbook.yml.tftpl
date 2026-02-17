@@ -139,7 +139,7 @@
           cloud-provider-name: "aws"
           %{~ if length(server_instance_ips) > 1 }
           {% if ansible_default_ipv4.address != '${server_instance_ips[0]}' %}
-          server: https://${server_instance_ips[0]}:9345
+          server: https://ip-${replace(server_instance_ips[0], ".", "-")}.${aws_region}.compute.internal:9345
           {% endif %}
           %{~ endif }
         mode: '0644'

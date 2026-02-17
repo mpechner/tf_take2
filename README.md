@@ -57,7 +57,7 @@ vpn_connection_info = {
 **Important VPN Configuration:**
 - The OpenVPN client subnet is configured as `172.27.224.0/20`
 - This subnet is added to the RKE security groups to allow kubectl/k9s access from VPN-connected clients
-- If you change the VPN IP Network in the OpenVPN admin panel, you must also update the `cluster_cidr_blocks` in `RKE-cluster/dev-cluster/rke/main.tf`
+- If you change the VPN IP Network in the OpenVPN admin panel, you must also update the `cluster_cidr_blocks` in `RKE-cluster/dev-cluster/RKE/main.tf`
 
 Get the ssh key from secret openvpn-ssh and save the private key to ~/.ssh/openvpn.pem
 ```bash
@@ -84,7 +84,7 @@ login and download the profile. User-locked or autologin. Again, since this is a
 
 ## Step 5: Bring up the EC2 instances
 ```bash
-cd RKE-CLUSTER/dev-cluster/ec2
+cd RKE-cluster/dev-cluster/ec2
 terraform apply
 ```
 
@@ -109,7 +109,7 @@ Terraform will automatically wait for all EC2 instances to pass their system and
 Make sure the ec2 nodes are fully up.
 You must be connected to the VPN now.
 ```bash
-cd RKE-CLUSTER/dev-cluster/rke
+cd RKE-cluster/dev-cluster/RKE
 terraform apply
 ```
 

@@ -19,11 +19,19 @@ CONTEXT_NAME="dev-rke2"
 echo "Setting up kubectl configuration for RKE2 cluster..."
 echo "Server IP: ${SERVER_IP}"
 
-# Clean up any old dev-rke2 context and cluster from previous deployments
+# Clean up any old dev-rke2 context, cluster, and user from previous deployments
 echo "Cleaning up old configurations..."
 kubectl config delete-context ${CONTEXT_NAME} 2>/dev/null || true
+kubectl config delete-cluster ${CONTEXT_NAME} 2>/dev/null || true
 kubectl config delete-cluster default 2>/dev/null || true
+kubectl config delete-user ${CONTEXT_NAME} 2>/dev/null || true
 kubectl config delete-user default 2>/dev/null || true
+
+# Remove old dev-rke2.yaml file if it exists
+if [ -f "${KUBECONFIG_FILE}" ]; then
+  echo "Removing old ${KUBECONFIG_FILE}..."
+  rm -f "${KUBECONFIG_FILE}"
+fi
 
 # Check if SSH key exists
 if [ ! -f "${SSH_KEY}" ]; then
@@ -40,16 +48,42 @@ scp -i "${SSH_KEY}" ubuntu@${SERVER_IP}:/etc/rancher/rke2/rke2.yaml "${KUBECONFI
 echo "Updating server URL..."
 sed -i '' "s|server: https://127.0.0.1:6443|server: https://${SERVER_IP}:6443|" "${KUBECONFIG_FILE}"
 
-# Rename context
+# Rename context to match our naming convention
 echo "Renaming context to ${CONTEXT_NAME}..."
-kubectl --kubeconfig "${KUBECONFIG_FILE}" config rename-context default "${CONTEXT_NAME}" 2>/dev/null || \
-kubectl --kubeconfig "${KUBECONFIG_FILE}" config rename-context rke2 "${CONTEXT_NAME}" 2>/dev/null || \
-echo "Context already named ${CONTEXT_NAME}"
+kubectl --kubeconfig "${KUBECONFIG_FILE}" config rename-context default "${CONTEXT_NAME}" 2>/dev/null || true
+
+# Also rename cluster and user to match for consistency
+TEMP_KUBECONFIG="${HOME}/.kube/dev-rke2-temp.yaml"
+kubectl --kubeconfig "${KUBECONFIG_FILE}" config view --flatten | \
+  sed "s/name: default/name: ${CONTEXT_NAME}/g" > "${TEMP_KUBECONFIG}"
+mv "${TEMP_KUBECONFIG}" "${KUBECONFIG_FILE}"
 
 # Merge with existing kubeconfig
 echo "Merging with existing kubeconfig..."
 KUBECONFIG="${HOME}/.kube/config:${KUBECONFIG_FILE}" kubectl config view --flatten > "${HOME}/.kube/merged"
 mv "${HOME}/.kube/merged" "${HOME}/.kube/config"
+
+# Validate and fix context to cluster mapping
+echo "Validating context configuration..."
+CONTEXT_CLUSTER=$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"${CONTEXT_NAME}\")].context.cluster}")
+CONTEXT_USER=$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"${CONTEXT_NAME}\")].context.user}")
+
+if [ "${CONTEXT_CLUSTER}" != "${CONTEXT_NAME}" ] || [ "${CONTEXT_USER}" != "${CONTEXT_NAME}" ]; then
+  echo "Fixing context ${CONTEXT_NAME} to point to correct cluster and user..."
+  kubectl config set-context "${CONTEXT_NAME}" --cluster="${CONTEXT_NAME}" --user="${CONTEXT_NAME}"
+fi
+
+# Clean up any orphaned contexts pointing to wrong cluster
+echo "Cleaning up orphaned contexts..."
+for ctx in $(kubectl config get-contexts -o name); do
+  if [ "${ctx}" != "${CONTEXT_NAME}" ] && [ "${ctx}" != "minikube" ] && [ "${ctx}" != "docker-desktop" ]; then
+    CTX_CLUSTER=$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"${ctx}\")].context.cluster}")
+    if [ "${CTX_CLUSTER}" = "default" ] || [ "${CTX_CLUSTER}" = "${CONTEXT_NAME}" ]; then
+      echo "  Removing orphaned context: ${ctx}"
+      kubectl config delete-context "${ctx}" 2>/dev/null || true
+    fi
+  fi
+done
 
 # Set permissions
 chmod 600 "${HOME}/.kube/config"

@@ -222,8 +222,10 @@ resource "kubernetes_manifest" "managed_ingress" {
         each.value.cluster_issuer != null ? {
           "cert-manager.io/cluster-issuer" = each.value.cluster_issuer
         } : {},
+        each.value.tls_secret_name != null ? {
+          "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
+        } : {},
         each.value.backend_tls_enabled ? {
-          "traefik.ingress.kubernetes.io/router.entrypoints"   = "websecure"
           "traefik.ingress.kubernetes.io/service.serversscheme" = "https"
         } : {}
       )

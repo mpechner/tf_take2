@@ -28,6 +28,8 @@ This stage deploys the foundational infrastructure that installs Custom Resource
 
 ## Configuration
 
+**AWS access:** All AWS operations use Terraform’s configured assume role (`terraform-execute` by default). No scripts or AWS profile / env vars are required.
+
 Edit `terraform.tfvars`:
 
 ```hcl
@@ -84,12 +86,52 @@ kubectl get svc -n traefik traefik
 kubectl get svc -n traefik traefik-internal
 ```
 
-## Important Notes
+## Destroy: Stuck Services and Orphan NLBs
 
-- This stage must complete successfully before deploying Stage 2
-- CRD installation happens automatically via Helm charts
-- Load balancers will provision AWS NLBs (takes 2-3 minutes)
-- external-dns will start monitoring services and creating Route53 records
+Terraform does **not** create the NLBs directly—the **AWS Load Balancer Controller** does when it sees the LoadBalancer Services. During `terraform destroy`, the controller (Helm release) is destroyed, so when Terraform deletes the Traefik Services, nothing is left to delete the NLBs or to remove the finalizers. The Services can sit in **Terminating** and the NLBs remain in AWS.
+
+**If destroy hangs on `kubernetes_service_v1.traefik_internal` or the Traefik Helm release:**  
+Clear the finalizer so the Service can be removed. Patch **both** services (the Helm release owns `traefik`; Terraform owns `traefik-internal`):
+```bash
+kubectl patch svc -n traefik traefik-internal -p '{"metadata":{"finalizers":null}}' --type=merge
+kubectl patch svc -n traefik traefik -p '{"metadata":{"finalizers":null}}' --type=merge
+```
+Then run `terraform destroy` again. The destroy-time cleanup (if still in state) deletes NLBs/target groups and retries finalizer removal; if those resources were already destroyed, delete any remaining NLBs in EC2 → Load balancers and target groups manually.
+
+## Troubleshooting: NLB target groups have no healthy targets
+
+If the NLBs are created but target groups show no healthy targets:
+
+1. **No registered targets**  
+   We use **instance** target type. RKE2 sets node `providerID` to `rke2://nodename`, which the AWS LB controller does not use to register EC2 instances. **Provider-ID patching is done by Terraform** (same assume role as the rest of the stack—no scripts, no AWS profile or env vars). With `patch_node_provider_ids = true` (default), `terraform apply` will:
+   - Resolve each node’s InternalIP to an EC2 instance ID using the Terraform AWS provider (terraform-exec role)
+   - Patch each node’s `providerID` to `aws:///az/instance-id` via `kubectl` (kubeconfig only)
+   - Restart the AWS Load Balancer Controller so it registers instance targets  
+   After apply, target groups should show healthy instance targets within a few minutes. To disable patching (e.g. you manage providerIDs elsewhere), set `patch_node_provider_ids = false` in tfvars or CLI.
+
+2. **Confirm Traefik pods and Service**
+   ```bash
+   kubectl get pods -n traefik
+   kubectl get svc -n traefik
+   kubectl get endpoints -n traefik
+   ```
+   Pods should be Ready; the Traefik Service should have NodePort(s) and endpoints.
+
+3. **Health checks**  
+   Both Traefik services use TCP health checks on the traffic port (no HTTP path). If you changed annotations, ensure `aws-load-balancer-healthcheck-protocol` is `TCP` and `aws-load-balancer-healthcheck-port` is `traffic-port`.
+
+4. **Node security group (RKE EC2)**  
+   NLB health checks come from the VPC. In `RKE-cluster/dev-cluster/ec2` (or your EC2 module), the node security group must allow:
+   - **Instance targets:** NodePort range (e.g. 30000–32767) from the VPC CIDR.
+   - **IP targets:** Ports 80/443 from the VPC (or 0.0.0.0/0 if you already allow public NLB traffic).
+
+5. **Manual check (from a node or VPN)**  
+   Get the Traefik Service NodePort: `kubectl get svc -n traefik traefik -o jsonpath='{.spec.ports[0].nodePort}'`. Then from a machine that can reach the nodes (e.g. VPN): `curl -v <node-internal-ip>:<nodePort>` — connection should succeed (TCP is enough for health).
+
+6. **AWS Console**  
+   In EC2 → Target Groups → select the NLB’s target group → Targets: check “Status” and “Status reason” for each target.
+</think><｜tool▁call▁begin｜>
+TodoWrite
 
 ## Next Steps
 

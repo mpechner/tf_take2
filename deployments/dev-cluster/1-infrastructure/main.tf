@@ -225,10 +225,33 @@ module "traefik" {
     }
   ]
   values = [yamlencode({
+    # Dashboard API must be enabled so api@internal exists; IngressRoute is in 2-applications (host + TLS)
+    api = {
+      dashboard = true
+    }
+    # IngressRoutes in traefik namespace reference services in nginx-sample and cattle-system; required for routes to work
+    providers = {
+      kubernetesCRD = {
+        allowCrossNamespace = true
+      }
+    }
+    ingressRoute = {
+      dashboard = {
+        enabled = false
+      }
+    }
     service = {
-      annotations = length(local.public_subnet_ids) > 0 ? {
-        "service.beta.kubernetes.io/aws-load-balancer-subnets" = join(",", local.public_subnet_ids)
-      } : {}
+      annotations = merge(
+        length(local.public_subnet_ids) > 0 ? {
+          "service.beta.kubernetes.io/aws-load-balancer-subnets" = join(",", local.public_subnet_ids)
+        } : {},
+        {
+          "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol" = "TCP"
+          "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"     = "traffic-port"
+          # All three hostnames point to this public NLB (only). Internal NLB has no hostnames to avoid duplicate DNS.
+          "external-dns.alpha.kubernetes.io/hostname"                          = "nginx.${var.route53_domain},traefik.${var.route53_domain},rancher.${var.route53_domain}"
+        }
+      )
       spec = {
         loadBalancerClass = "service.k8s.aws/nlb"
       }
@@ -243,12 +266,13 @@ resource "kubernetes_service_v1" "traefik_internal" {
   metadata {
     name      = "traefik-internal"
     namespace = "traefik"
-    annotations = merge(
+      annotations = merge(
       {
-        "service.beta.kubernetes.io/aws-load-balancer-type"     = "nlb"
-        "service.beta.kubernetes.io/aws-load-balancer-internal" = "true"
-        "service.beta.kubernetes.io/aws-load-balancer-scheme"   = "internal"
-        "external-dns.alpha.kubernetes.io/hostname"             = "traefik.${var.route53_domain},rancher.${var.route53_domain}"
+        "service.beta.kubernetes.io/aws-load-balancer-type"                    = "nlb"
+        "service.beta.kubernetes.io/aws-load-balancer-internal"                = "true"
+        "service.beta.kubernetes.io/aws-load-balancer-scheme"                  = "internal"
+        "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol"   = "TCP"
+        "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"        = "traffic-port"
       },
       length(local.private_subnet_ids) > 0 ? {
         "service.beta.kubernetes.io/aws-load-balancer-subnets" = join(",", local.private_subnet_ids)
@@ -259,9 +283,10 @@ resource "kubernetes_service_v1" "traefik_internal" {
   spec {
     type                = "LoadBalancer"
     load_balancer_class = "service.k8s.aws/nlb"
+    # Traefik Helm chart uses instance label = release-name + namespace (e.g. traefik-traefik)
     selector = {
       "app.kubernetes.io/name"     = "traefik"
-      "app.kubernetes.io/instance" = "traefik"
+      "app.kubernetes.io/instance" = "traefik-traefik"
     }
     port {
       name        = "web"
@@ -307,4 +332,37 @@ resource "null_resource" "wait_for_aws_lb_controller" {
   }
 
   depends_on = [helm_release.aws_load_balancer_controller]
+}
+
+# Run during destroy: delete NLBs/target groups, then repeatedly strip finalizers so Services can finish deleting
+# even when the controller adds finalizers after Terraform sends DELETE. No depends_on so this can run in
+# parallel with Service destroy; the retry loop removes finalizers after the controller attaches them.
+resource "null_resource" "cleanup_nlbs_on_destroy" {
+  triggers = {
+    traefik_internal = kubernetes_service_v1.traefik_internal.id
+    traefik_release  = "${module.traefik.namespace}/${module.traefik.name}"
+    region           = var.aws_region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -e
+      REGION="${self.triggers.region}"
+      echo "Cleaning up NLBs and target groups..."
+      for arn in $(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[?starts_with(LoadBalancerName, `k8s-traefik`)].LoadBalancerArn' --output text 2>/dev/null); do
+        [ -n "$arn" ] && aws elbv2 delete-load-balancer --load-balancer-arn "$arn" --region "$REGION" && echo "Deleted NLB $arn"
+      done
+      for arn in $(aws elbv2 describe-target-groups --region "$REGION" --query 'TargetGroups[?starts_with(TargetGroupName, `k8s-traefik`)].TargetGroupArn' --output text 2>/dev/null); do
+        [ -n "$arn" ] && aws elbv2 delete-target-group --target-group-arn "$arn" --region "$REGION" && echo "Deleted TG $arn"
+      done
+      echo "Stripping finalizers from LoadBalancer Services (retry for 3 min so controller cannot re-add)..."
+      for i in $(seq 1 18); do
+        kubectl patch svc -n traefik traefik-internal -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+        kubectl patch svc -n traefik traefik -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+        sleep 10
+      done
+      echo "Cleanup done."
+    EOT
+  }
 }

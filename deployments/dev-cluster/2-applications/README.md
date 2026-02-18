@@ -81,37 +81,20 @@ curl https://nginx.dev.foobar.support
 - Access: Internet (via external NLB)
 - Certificate: Let's Encrypt (auto-renewed)
 
-### Traefik Dashboard (Internal)
-- URL: https://traefik.dev.foobar.support
-- Access: VPN/internal network only (via internal NLB)
+### Traefik Dashboard (Public)
+- URL: https://traefik.dev.foobar.support/dashboard or https://traefik.dev.foobar.support/api
+- Same public NLB as nginx; no VPN required once DNS has synced.
 - Certificate: Let's Encrypt (auto-renewed)
-- Auth: Basic auth (requires `traefik-auth-secret` to be created separately)
+
+### Rancher (Public)
+- URL: https://rancher.dev.foobar.support (or your `route53_domain`)
+- Same public NLB as nginx; no VPN required.
+
+**If Traefik or Rancher don’t load:** Run 1-infrastructure apply so the public NLB gets `traefik` and `rancher` in external-dns; then wait for external-dns to update Route53 (or restart the external-dns deployment). Check certs: `kubectl get certificate -n traefik` (traefik-dashboard-tls, rancher-tls should be Ready).
 
 ## Adding New Applications
 
-To add a new application with automatic TLS:
-
-1. Deploy your application to a namespace
-2. Add an ingress configuration in `main.tf`:
-
-```hcl
-module "applications" {
-  source = "./modules/ingress-applications"
-  
-  ingresses = {
-    my-app = {
-      namespace           = "my-namespace"
-      host                = "myapp.dev.foobar.support"
-      service_name        = "my-service"
-      service_port        = 443
-      cluster_issuer      = "letsencrypt-staging"
-      backend_tls_enabled = true
-    }
-  }
-}
-```
-
-3. Apply: `terraform apply`
+**See [ADDING-NEW-APP.md](../ADDING-NEW-APP.md)** for a step-by-step guide. In short: deploy your app, add its hostname to the public NLB in 1-infrastructure (external-dns), then in 2-applications add a Certificate and an IngressRoute in the **traefik** namespace (use `traefik.io/v1alpha1`). Do not rely on the applications module’s `ingresses` map for new apps; use the same explicit Certificate + IngressRoute pattern as nginx and rancher.
 
 ## Troubleshooting
 

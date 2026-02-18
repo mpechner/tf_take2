@@ -12,7 +12,7 @@ output "service_name" {
 
 output "service_port" {
   description = "Port of the nginx service"
-  value       = 443
+  value       = 80
 }
 
 output "ingress_name" {

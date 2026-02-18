@@ -93,7 +93,7 @@ resource "kubernetes_deployment" "this" {
           image = "nginx:1.25-alpine"
 
           port {
-            container_port = 443
+            container_port = 80
             protocol       = "TCP"
           }
 
@@ -106,12 +106,6 @@ resource "kubernetes_deployment" "this" {
           volume_mount {
             name       = "nginx-config"
             mount_path = "/etc/nginx/conf.d"
-            read_only  = true
-          }
-
-          volume_mount {
-            name       = "tls"
-            mount_path = "/etc/nginx/ssl"
             read_only  = true
           }
 
@@ -129,8 +123,7 @@ resource "kubernetes_deployment" "this" {
           liveness_probe {
             http_get {
               path   = "/health"
-              port   = 443
-              scheme = "HTTPS"
+              port   = 80
             }
             initial_delay_seconds = 10
             period_seconds        = 10
@@ -139,8 +132,7 @@ resource "kubernetes_deployment" "this" {
           readiness_probe {
             http_get {
               path   = "/health"
-              port   = 443
-              scheme = "HTTPS"
+              port   = 80
             }
             initial_delay_seconds = 5
             period_seconds        = 5
@@ -158,13 +150,6 @@ resource "kubernetes_deployment" "this" {
           name = "nginx-config"
           config_map {
             name = kubernetes_config_map.nginx_config.metadata[0].name
-          }
-        }
-
-        volume {
-          name = "tls"
-          secret {
-            secret_name = local.backend_tls_secret
           }
         }
       }
@@ -185,10 +170,10 @@ resource "kubernetes_service" "this" {
     }
 
     port {
-      port        = 443
-      target_port = 443
+      port        = 80
+      target_port = 80
       protocol    = "TCP"
-      name        = "https"
+      name        = "http"
     }
 
     type = "ClusterIP"

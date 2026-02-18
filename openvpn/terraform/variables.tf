@@ -49,20 +49,3 @@ variable "comcast_ip" {
   default     = ""  # Empty = auto-detect, or specify like "1.2.3.4/32"
 }
 
-variable "domain" {
-  description = "Domain name for the VPN server (optional)"
-  type        = string
-  default     = ""
-}
-
-variable "create_dns_record" {
-  description = "Whether to create a Route53 DNS record"
-  type        = bool
-  default     = false
-}
-
-variable "route53_zone_id" {
-  description = "Route53 hosted zone ID (required if create_dns_record is true)"
-  type        = string
-  default     = ""
-}

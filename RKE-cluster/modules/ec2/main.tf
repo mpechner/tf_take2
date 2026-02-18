@@ -67,7 +67,7 @@ resource "aws_security_group" "nodes" {
     description = "HTTPS from internet for public NLB"
   }
 
-  # NodePort range for LoadBalancer services (NLB forwards to NodePorts)
+  # NodePort range for LoadBalancer services (NLB instance target type)
   ingress {
     from_port   = 30000
     to_port     = 32767

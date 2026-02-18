@@ -114,7 +114,6 @@ resource "aws_instance" "openvpn" {
 
   user_data = templatefile("${path.module}/userdata.sh", {
     environment = var.environment
-    domain      = var.domain
   })
 
   tags = {
@@ -139,12 +138,3 @@ resource "aws_eip" "openvpn" {
   }
 }
 
-# Route53 record (optional - if you have a domain)
-resource "aws_route53_record" "openvpn" {
-  count   = var.create_dns_record ? 1 : 0
-  zone_id = var.route53_zone_id
-  name    = "vpn.${var.domain}"
-  type    = "A"
-  ttl     = "300"
-  records = [aws_eip.openvpn.public_ip]
-}

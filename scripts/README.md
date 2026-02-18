@@ -29,6 +29,15 @@ kubectl get nodes
 
 ---
 
+### `setup-vpn-tls.sh`
+Get a Let's Encrypt certificate for the OpenVPN hostname, set the Route53 A record (`vpn.<domain>` → server IP), and store the cert in AWS Secrets Manager for use in the OpenVPN Admin UI.
+
+**Usage:** Run from repo root after the OpenVPN server is deployed. See script for required env vars or args (domain, Route53 zone ID, server IP, email).
+
+**When to use:** After deploying OpenVPN (see openvpn/README.md), to enable TLS and DNS for the VPN.
+
+---
+
 ### `get-rke-ssh-key.sh`
 Retrieve and save the RKE SSH private key from AWS Secrets Manager.
 
@@ -151,7 +160,9 @@ More robust expansion using Ansible playbook.
 scripts/
 ├── README.md                    # This file
 ├── setup-k9s.sh                 # kubectl/k9s configuration
+├── setup-vpn-tls.sh             # OpenVPN: Let's Encrypt + Route53 + Secrets Manager
 ├── get-rke-ssh-key.sh          # SSH key retrieval
+├── get-openvpn-ssh-key.sh      # OpenVPN SSH key retrieval
 ├── fix-cloud-provider.sh        # One-time cloud provider fix
 ├── patch-provider-ids.sh        # One-time providerID fix
 └── expand-volumes/              # Volume management tools

@@ -8,6 +8,14 @@ has matured.
 
 [Network Plan](VPC/Network-Plan.md)
 
+## What this demonstrates
+
+End-to-end **Infrastructure as Code** for a production-style AWS + Kubernetes environment: VPC, VPN, RKE2 cluster, and a full ingress stack with automatic TLS and DNS. All of it is Terraform-managed with remote state and a clear deployment order.
+
+**Technologies:** Terraform, AWS (VPC, EC2, Route53, IAM, NLBs), Kubernetes (RKE2, Helm, CRDs), Traefik, cert-manager, external-DNS, Rancher. Security: private subnets, VPN for cluster access, Let's Encrypt production certificates.
+
+Suitable as a reference for multi-account AWS, Kubernetes operations, and ingress/TLS patterns.
+
 # Bootstrap
 
 ## Step 1: Organization Setup
@@ -188,11 +196,11 @@ terraform apply
 ```
 
 This deploys:
-- **Rancher** at `https://rancher.dev.foobar.support` (Kubernetes management UI)
-- **Sample nginx site** at `https://nginx.dev.foobar.support` (public)
-- **Traefik dashboard** at `https://traefik.dev.foobar.support` (internal, VPN required)
+- **Rancher** at `https://rancher.dev.foobar.support` (Kubernetes management UI). **Initial login:** username `admin`, password `admin` (change on first use).
+- **Sample nginx site** at `https://nginx.dev.foobar.support`
+- **Traefik dashboard** at `https://traefik.dev.foobar.support/dashboard`
 
-**Note:** The nginx site is publicly accessible. The Traefik dashboard and Rancher require VPN connection.
+**Note:** All three are on the same public NLB; no VPN required once DNS has synced. See `deployments/dev-cluster/ADDING-NEW-APP.md` to add more apps.
 
 You can monitor the deployment with k9s:
 ```bash

@@ -54,10 +54,13 @@ key_pair_name = "your-aws-key-pair-name"
 # comcast_ip = "203.0.113.1/32"
 ```
 
-### 3. Deploy Infrastructure
+### 3. Run Terraform
+
 ```bash
-chmod +x scripts/deploy-infrastructure.sh
-./scripts/deploy-infrastructure.sh
+cd openvpn/terraform
+terraform init
+terraform plan    # optional: preview
+terraform apply
 ```
 
 ### 4. Access OpenVPN Admin Interface
@@ -111,21 +114,91 @@ Different VPCs use different DNS resolver IPs. The DNS server is always at `VPC_
 ### 6. Download Client Configurations
 Visit: `https://YOUR_SERVER_IP:944/`
 
+### 7. Let's Encrypt certificate (optional)
+
+You can get a browser-trusted TLS certificate for `vpn.dev.foobar.support` and store the **main cert, intermediate, and root** in AWS Secrets Manager so you can install it in OpenVPN via the Admin UI.
+
+**Prerequisites:** A Route53 hosted zone for your domain (e.g. `dev.foobar.support`). Your AWS identity needs `route53:ListResourceRecordSets`, `route53:ChangeResourceRecordSets`, `route53:GetChange`, and `route53:ListHostedZones` on the hosted zone (for the ACME DNS-01 challenge).
+
+**Enable in Terraform:**
+
+In `terraform/terraform.tfvars` set:
+
+```hcl
+domain             = "dev.foobar.support"
+route53_zone_id    = "Z0123456789ABCDEF"   # Your hosted zone ID
+create_dns_record  = true                  # Creates vpn.dev.foobar.support → EIP
+enable_letsencrypt = true
+letsencrypt_email  = "admin@foobar.support" # For Let's Encrypt account and expiry notices
+```
+
+For testing without hitting Let's Encrypt rate limits, use staging first:
+
+```hcl
+letsencrypt_server_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
+```
+
+Then run Terraform (see **Step 3** above).
+
+**Not seeing the secret?** The secret is only created when all of these are true:
+
+1. **Variables set:** In `terraform.tfvars` you have `enable_letsencrypt = true`, `domain = "dev.foobar.support"` (or your domain), and `route53_zone_id = "Z0..."` (your hosted zone ID). Check what Terraform is using:
+   ```bash
+   terraform output openvpn_tls_config
+   ```
+   If any value shows `(empty …)` or `enable_letsencrypt = false`, fix tfvars and run `terraform apply` again.
+
+2. **Apply succeeded:** The ACME certificate step must complete. If `terraform apply` failed at `acme_certificate.openvpn` (e.g. DNS challenge timeout or "failed to create TXT record"), the secret is never created. Fix the error (usually Route53 permissions: the role needs `route53:ChangeResourceRecordSets` and `route53:ListHostedZones` on the zone) and re-apply.
+
+3. **Check the output:**
+   ```bash
+   terraform output openvpn_tls_secret
+   ```
+   If `created` is `true`, you get `name` and `arn`. If `created` is `false`, read the `why` field and fix the config.
+
+**IAM:** Your AWS identity needs `route53:ChangeResourceRecordSets` and `route53:ListHostedZones` on the hosted zone so the ACME provider can create the `_acme-challenge.vpn.dev.foobar.support` TXT record.
+
+**Retrieve the certificate from Secrets Manager:**
+
+The secret is stored as JSON with keys: `certificate` (leaf), `private_key`, `intermediate`, `root`, and `full_chain` (leaf + intermediate). After `terraform apply`, get the secret name from `terraform output openvpn_tls_secret` (use the `name` field when `created` is true), then:
+
+```bash
+aws secretsmanager get-secret-value --secret-id openvpn-tls-vpn-dev-foobar-support --query SecretString --output text | jq -r '.certificate'   > /tmp/cert.pem
+aws secretsmanager get-secret-value --secret-id openvpn-tls-vpn-dev-foobar-support --query SecretString --output text | jq -r '.private_key'   > /tmp/key.pem
+aws secretsmanager get-secret-value --secret-id openvpn-tls-vpn-dev-foobar-support --query SecretString --output text | jq -r '.full_chain'   > /tmp/fullchain.pem
+aws secretsmanager get-secret-value --secret-id openvpn-tls-vpn-dev-foobar-support --query SecretString --output text | jq -r '.root'         > /tmp/root.pem
+```
+
+(Use the actual secret name from `terraform output openvpn_tls_secret` → `name`.)
+
+**Install in OpenVPN Admin UI:**
+
+1. Open **https://vpn.dev.foobar.support:943/admin** (or the server IP until DNS is set).
+2. Go to **Configuration** → **Network Settings** (or **Web Server** / certificate section, depending on your OpenVPN Access Server version).
+3. Set **Hostname or IP address**: `vpn.dev.foobar.support`.
+4. Where the UI asks for the server certificate and private key:
+   - **Certificate**: paste contents of `full_chain.pem` (or `cert.pem` if the UI has a separate “CA bundle” field for the intermediate).
+   - **Private key**: paste contents of `key.pem`.
+5. If the UI has a **CA certificate** or **chain** field, use `full_chain.pem` or paste `intermediate` and optionally `root` as needed.
+6. Save and restart the server if prompted.
+
+**Renewal:** Let's Encrypt certs are valid 90 days. Re-run `terraform apply` before expiry (or use a cron job that runs `terraform apply` in the openvpn terraform directory); Terraform will request a new cert and update the secret. Then re-install the updated cert in the OpenVPN UI (or automate with `sacli` as in `openvpn/TODO.md`).
+
 ## 📁 Project Structure
 
 ```
 openvpn/
-├── terraform/                 # Infrastructure as Code
-│   ├── main.tf               # Main Terraform configuration
-│   ├── variables.tf          # Variable definitions
-│   ├── outputs.tf            # Output values
-│   ├── terraform.tf          # Provider and backend config
-│   ├── userdata.sh           # EC2 instance startup script
-│   └── terraform.tfvars      # Your configuration values
-├── scripts/                   # Deployment scripts
-│   └── deploy-infrastructure.sh
-└── README.md                 # This file
+├── terraform/                 # Infrastructure as Code (EC2, EIP, security group)
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── terraform.tf
+│   ├── userdata.sh
+│   └── terraform.tfvars
+└── README.md
 ```
+
+TLS/Route53 setup script lives at repo root: **scripts/setup-vpn-tls.sh** (run after deploy).
 
 ## 🔧 Manual Steps (If Needed)
 

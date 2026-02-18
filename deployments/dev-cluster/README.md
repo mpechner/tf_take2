@@ -1,6 +1,6 @@
-# RKE Cluster Deployment - Two-Stage Approach
+# Dev-cluster deployment (two-stage)
 
-This deployment is split into **2 stages** to handle Terraform's limitation with Custom Resource Definitions (CRDs).
+This deployment is split into **2 stages** to handle Terraform's limitation with Custom Resource Definitions (CRDs). For a diagram and data flow, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Why Two Stages?
 
@@ -45,10 +45,9 @@ terraform apply
 ```
 
 **What this deploys:**
-- ClusterIssuer (Let's Encrypt configuration)
-- Traefik Dashboard (with IngressRoute + authentication)
-- Backend TLS infrastructure (internal service certificates)
-- Nginx sample application (demo with TLS)
+- ClusterIssuer (Let's Encrypt prod)
+- Traefik Dashboard, Rancher, Nginx sample (each with explicit Certificate + IngressRoute in `traefik` namespace)
+- HTTP→HTTPS redirect for rancher/traefik
 
 **Duration:** ~1-2 minutes
 
@@ -72,8 +71,13 @@ kubectl get svc -n kube-system traefik -o jsonpath='{.status.loadBalancer.ingres
 
 ## Accessing Services
 
-- **Nginx Sample:** https://nginx.dev.foobar.support (public)
-- **Traefik Dashboard:** https://traefik.dev.foobar.support (internal VPN only)
+All on the public NLB (no VPN required once DNS is set):
+
+- **Nginx:** https://nginx.dev.foobar.support
+- **Traefik Dashboard:** https://traefik.dev.foobar.support/dashboard
+- **Rancher:** https://rancher.dev.foobar.support
+
+To add more apps, see [ADDING-NEW-APP.md](ADDING-NEW-APP.md).
 
 ## Common Operations
 
@@ -88,7 +92,7 @@ terraform apply
 
 ### Add New Applications
 
-Modify `2-applications/main.tf` and re-apply Stage 2 only:
+Follow [ADDING-NEW-APP.md](ADDING-NEW-APP.md) (add hostname in 1-infrastructure, then Certificate + IngressRoute in 2-applications). Then re-apply Stage 2 (and Stage 1 if you added a new hostname):
 
 ```bash
 cd 2-applications

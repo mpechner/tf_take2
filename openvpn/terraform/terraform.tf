@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.0"
+    }
   }
 
   # S3 Backend for state storage
@@ -21,9 +25,9 @@ terraform {
   }
 }
 
-# AWS Provider Configuration
+# AWS Provider: uses your default credentials (e.g. admin).
 provider "aws" {
-  region = "us-west-2"  # Change this to your preferred region
+  region = "us-west-2"
 
   default_tags {
     tags = {
@@ -33,15 +37,5 @@ provider "aws" {
       Purpose     = "VPN Server"
     }
   }
-
-  assume_role {
-    role_arn     = "arn:aws:iam::${var.account_id}:role/OrganizationAccountAccessRole"
-    session_name = "terraform-openvpn"
-  }
 }
 
-# Provider for ACM certificates (if in different region)
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
-}

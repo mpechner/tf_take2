@@ -25,10 +25,6 @@ output "detected_admin_ip" {
   value       = local.admin_ip
 }
 
-output "openvpn_dns_name" {
-  description = "DNS name for the OpenVPN server (if Route53 record created)"
-  value       = var.create_dns_record ? "vpn.${var.domain}" : ""
-}
 
 output "ssh_command" {
   description = "SSH command to connect to the OpenVPN server"
@@ -54,3 +50,4 @@ output "vpn_dns_settings" {
     ui_path       = "Configuration → VPN Settings"
   }
 }
+

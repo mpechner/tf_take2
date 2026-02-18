@@ -1,9 +1,17 @@
 #!/bin/bash
 set -e
 
+REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}"
+
 echo "=========================================="
 echo "Patching Node Provider IDs to AWS Format"
 echo "=========================================="
+echo ""
+echo "AWS identity (must be the account that owns the RKE EC2 instances):"
+aws sts get-caller-identity --region "$REGION" || { echo "ERROR: aws cli failed. Set AWS_PROFILE or credentials for the account that owns the nodes."; exit 1; }
+echo ""
+echo "Region: $REGION"
+echo ""
 
 # Get all nodes with their IPs and instance IDs
 kubectl get nodes -o json | jq -r '.items[] | 
@@ -19,19 +27,19 @@ kubectl get nodes -o json | jq -r '.items[] |
   
   # Get the instance ID from AWS
   INSTANCE_ID=$(aws ec2 describe-instances \
-    --region us-west-2 \
+    --region "$REGION" \
     --filters "Name=private-ip-address,Values=$IP" "Name=instance-state-name,Values=running" \
     --query 'Reservations[0].Instances[0].InstanceId' \
     --output text)
   
   if [ "$INSTANCE_ID" == "None" ] || [ -z "$INSTANCE_ID" ]; then
-    echo "⚠️  Could not find instance ID for $IP"
+    echo "⚠️  Could not find instance ID for $IP (check: same AWS account and region as EC2s?)"
     continue
   fi
   
   # Get availability zone
   AZ=$(aws ec2 describe-instances \
-    --region us-west-2 \
+    --region "$REGION" \
     --instance-ids $INSTANCE_ID \
     --query 'Reservations[0].Instances[0].Placement.AvailabilityZone' \
     --output text)
@@ -76,20 +84,16 @@ echo "Checking Target Group Health"
 echo "=========================================="
 echo ""
 
-# Get target group ARNs
-TG_443=$(aws elbv2 describe-target-groups --region us-west-2 --query 'TargetGroups[?contains(TargetGroupName, `k8s-traefik-traefik-92f1c14a88`)].TargetGroupArn' --output text)
-TG_80=$(aws elbv2 describe-target-groups --region us-west-2 --query 'TargetGroups[?contains(TargetGroupName, `k8s-traefik-traefik-f9e8effcef`)].TargetGroupArn' --output text)
-
-if [ -n "$TG_443" ]; then
-  echo "Target Group (Port 443):"
-  aws elbv2 describe-target-health --region us-west-2 --target-group-arn $TG_443 --query 'TargetHealthDescriptions[*].{TargetId:Target.Id,Port:Target.Port,State:TargetHealth.State,Reason:TargetHealth.Reason}' --output table
-fi
-
-if [ -n "$TG_80" ]; then
+# Show target health for any k8s Traefik target groups in this region
+echo "Target groups (k8s-traefik*):"
+aws elbv2 describe-target-groups --region "$REGION" --query 'TargetGroups[?starts_with(TargetGroupName, `k8s-traefik`)].{Name:TargetGroupName,Port:Port,ARN:TargetGroupArn}' --output table
+echo ""
+for TG_ARN in $(aws elbv2 describe-target-groups --region "$REGION" --query 'TargetGroups[?starts_with(TargetGroupName, `k8s-traefik`)].TargetGroupArn' --output text); do
+  TG_NAME=$(aws elbv2 describe-target-groups --target-group-arns "$TG_ARN" --region "$REGION" --query 'TargetGroups[0].TargetGroupName' --output text)
+  echo "Target health for $TG_NAME:"
+  aws elbv2 describe-target-health --region "$REGION" --target-group-arn "$TG_ARN" --query 'TargetHealthDescriptions[*].{TargetId:Target.Id,Port:Target.Port,State:TargetHealth.State,Reason:TargetHealth.Reason}' --output table
   echo ""
-  echo "Target Group (Port 80):"
-  aws elbv2 describe-target-health --region us-west-2 --target-group-arn $TG_80 --query 'TargetHealthDescriptions[*].{TargetId:Target.Id,Port:Target.Port,State:TargetHealth.State,Reason:TargetHealth.Reason}' --output table
-fi
+done
 
 echo ""
 echo "=========================================="

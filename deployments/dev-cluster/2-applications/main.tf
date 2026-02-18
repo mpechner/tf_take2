@@ -57,7 +57,7 @@ resource "kubernetes_manifest" "traefik_dashboard_cert" {
   depends_on = [module.applications]
 }
 
-# Traefik Dashboard IngressRoute
+# Traefik Dashboard IngressRoute (websecure = 443). Dashboard/API at /dashboard and /api; root / also matched.
 resource "kubernetes_manifest" "traefik_dashboard_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
@@ -70,8 +70,9 @@ resource "kubernetes_manifest" "traefik_dashboard_ingressroute" {
       entryPoints = ["websecure"]
       routes = [
         {
-          match = "Host(`traefik.${var.route53_domain}`)"
-          kind  = "Rule"
+          match    = "Host(`traefik.${var.route53_domain}`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`) || PathPrefix(`/`))"
+          kind     = "Rule"
+          priority = 100
           services = [
             {
               name = "api@internal"
@@ -84,6 +85,10 @@ resource "kubernetes_manifest" "traefik_dashboard_ingressroute" {
         secretName = "traefik-dashboard-tls"
       }
     }
+  }
+
+  field_manager {
+    force_conflicts = true
   }
 
   depends_on = [kubernetes_manifest.traefik_dashboard_cert]
@@ -120,26 +125,110 @@ resource "helm_release" "rancher" {
     }
   ]
 
-  depends_on = [
-    kubernetes_namespace_v1.cattle_system,
-    module.applications
-  ]
+  depends_on = [kubernetes_namespace_v1.cattle_system]
 }
 
-# Rancher Certificate
-resource "kubernetes_manifest" "rancher_cert" {
+# HTTP→HTTPS redirect for internal hosts (rancher, traefik dashboard)
+resource "kubernetes_manifest" "redirect_http_to_https" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "redirect-http-to-https"
+      namespace = "traefik"
+    }
+    spec = {
+      redirectScheme = {
+        scheme    = "https"
+        permanent = true
+        port      = "443"
+      }
+    }
+  }
+
+  depends_on = [module.applications]
+}
+
+# IngressRoute: HTTP (port 80) → redirect to HTTPS for nginx, rancher, traefik
+resource "kubernetes_manifest" "redirect_http_to_https_route" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "redirect-http-to-https"
+      namespace = "traefik"
+    }
+    spec = {
+      entryPoints = ["web"]
+      routes = [
+        {
+          match = "Host(`rancher.${var.route53_domain}`) || Host(`traefik.${var.route53_domain}`)"
+          kind  = "Rule"
+          middlewares = [
+            {
+              name      = "redirect-http-to-https"
+              namespace = "traefik"
+            }
+          ]
+          services = [
+            {
+              name      = "rancher"
+              namespace = "cattle-system"
+              port      = 80
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  depends_on = [kubernetes_manifest.redirect_http_to_https]
+}
+
+# Nginx on HTTP (port 80) so it works even when TLS cert isn't ready. Use this to verify routing first.
+resource "kubernetes_manifest" "nginx_ingressroute_http" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "nginx-http"
+      namespace = "traefik"
+    }
+    spec = {
+      entryPoints = ["web"]
+      routes = [
+        {
+          match    = "Host(`nginx.${var.route53_domain}`) && PathPrefix(`/`)"
+          kind     = "Rule"
+          priority = 100
+          services = [
+            {
+              name           = "nginx-sample"
+              namespace      = "nginx-sample"
+              port           = 80
+              passHostHeader = true
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  depends_on = [module.nginx_sample]
+}
+
+# Nginx: explicit Certificate + IngressRoute so Traefik has a direct route (avoids Ingress/class issues).
+resource "kubernetes_manifest" "nginx_cert" {
   manifest = {
     apiVersion = "cert-manager.io/v1"
     kind       = "Certificate"
     metadata = {
-      name      = "rancher-tls"
-      namespace = kubernetes_namespace_v1.cattle_system.metadata[0].name
+      name      = "nginx-tls"
+      namespace = "traefik"
     }
     spec = {
-      secretName = "rancher-tls"
-      dnsNames = [
-        "rancher.${var.route53_domain}"
-      ]
+      secretName = "nginx-tls"
+      dnsNames   = ["nginx.${var.route53_domain}"]
       issuerRef = {
         name  = "letsencrypt-${var.letsencrypt_environment}"
         kind  = "ClusterIssuer"
@@ -148,31 +237,88 @@ resource "kubernetes_manifest" "rancher_cert" {
     }
   }
 
-  depends_on = [
-    helm_release.rancher,
-    module.applications
-  ]
+  depends_on = [module.applications]
 }
 
-# Rancher IngressRoute
+resource "kubernetes_manifest" "nginx_ingressroute" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "nginx"
+      namespace = "traefik"
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [
+        {
+          match    = "Host(`nginx.${var.route53_domain}`) && PathPrefix(`/`)"
+          kind     = "Rule"
+          priority = 100
+          services = [
+            {
+              name           = "nginx-sample"
+              namespace      = "nginx-sample"
+              port           = 80
+              passHostHeader = true
+            }
+          ]
+        }
+      ]
+      tls = {
+        secretName = "nginx-tls"
+      }
+    }
+  }
+
+  depends_on = [kubernetes_manifest.nginx_cert]
+}
+
+# Rancher: explicit Certificate + IngressRoute (same pattern as nginx so Traefik routes reliably).
+resource "kubernetes_manifest" "rancher_cert" {
+  manifest = {
+    apiVersion = "cert-manager.io/v1"
+    kind       = "Certificate"
+    metadata = {
+      name      = "rancher-tls"
+      namespace = "traefik"
+    }
+    spec = {
+      secretName = "rancher-tls"
+      dnsNames   = ["rancher.${var.route53_domain}"]
+      issuerRef = {
+        name  = "letsencrypt-${var.letsencrypt_environment}"
+        kind  = "ClusterIssuer"
+        group = "cert-manager.io"
+      }
+    }
+  }
+
+  depends_on = [module.applications]
+}
+
+# Rancher on 443 (HTTPS): websecure = port 443, TLS from rancher-tls.
 resource "kubernetes_manifest" "rancher_ingressroute" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
     kind       = "IngressRoute"
     metadata = {
       name      = "rancher"
-      namespace = kubernetes_namespace_v1.cattle_system.metadata[0].name
+      namespace = "traefik"
     }
     spec = {
       entryPoints = ["websecure"]
       routes = [
         {
-          match = "Host(`rancher.${var.route53_domain}`)"
-          kind  = "Rule"
+          match    = "Host(`rancher.${var.route53_domain}`) && PathPrefix(`/`)"
+          kind     = "Rule"
+          priority = 100
           services = [
             {
-              name = "rancher"
-              port = 80
+              name           = "rancher"
+              namespace      = "cattle-system"
+              port           = 80
+              passHostHeader = true
             }
           ]
         }
@@ -183,13 +329,10 @@ resource "kubernetes_manifest" "rancher_ingressroute" {
     }
   }
 
-  depends_on = [
-    helm_release.rancher,
-    kubernetes_manifest.rancher_cert
-  ]
+  depends_on = [kubernetes_manifest.rancher_cert]
 }
 
-# Applications module - Creates certificates and ingresses
+# Applications module - Creates Ingress + cert-manager (same pattern as nginx; Rancher uses it for TLS + routing)
 module "applications" {
   source = "./modules/ingress-applications"
 
@@ -197,19 +340,14 @@ module "applications" {
   letsencrypt_environment = var.letsencrypt_environment
   traefik_namespace       = "traefik"
 
-  # Managed ingresses (including nginx-sample)
-  ingresses = {
-    nginx-sample = {
-      namespace           = "nginx-sample"
-      host                = "nginx.${var.route53_domain}"
-      service_name        = "nginx-sample"
-      service_port        = 443
-      cluster_issuer      = "letsencrypt-${var.letsencrypt_environment}"
-      backend_tls_enabled = true
-    }
-  }
+  # Nginx and Rancher are served by explicit IngressRoutes + Certificates in traefik namespace (prod); no Ingress here.
+  ingresses = {}
 
-  depends_on = [kubernetes_namespace_v1.nginx_sample]
+  depends_on = [
+    kubernetes_namespace_v1.nginx_sample,
+    kubernetes_namespace_v1.cattle_system,
+    helm_release.rancher
+  ]
 }
 
 # Nginx sample site - Deploy after certificates are ready
@@ -223,4 +361,13 @@ module "nginx_sample" {
   hostname         = "nginx.${var.route53_domain}"
 
   depends_on = [module.applications]
+}
+
+output "nginx_url" {
+  value = <<-EOT
+    Try HTTP first (works without TLS):  http://nginx.${var.route53_domain}
+    Then HTTPS (once cert is ready):     https://nginx.${var.route53_domain}
+    (Public NLB; ensure DNS resolves to the NLB.)
+  EOT
+  description = "Nginx app URLs."
 }

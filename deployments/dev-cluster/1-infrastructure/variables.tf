@@ -118,3 +118,11 @@ variable "node_iam_role_name" {
   default     = "rke-nodes-role"
   description = "Name of the RKE server node IAM role (required if attach_to_node_role is true)"
 }
+
+# Patch node providerIDs to AWS format so NLB target groups get instance targets. Uses Terraform
+# AWS + Kubernetes providers only (same assume role as rest of stack; no scripts or AWS profile).
+variable "patch_node_provider_ids" {
+  type        = bool
+  default     = true
+  description = "When true, patch RKE2 node providerIDs to aws:///az/instance-id and restart AWS LB controller so NLBs register targets."
+}

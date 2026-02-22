@@ -64,6 +64,17 @@ Retrieve and save the RKE SSH private key from AWS Secrets Manager.
 
 ---
 
+### `delete-traefik-nlbs.sh`
+Remove orphaned Traefik NLBs and target groups (e.g. after `terraform destroy` on 1-infrastructure left them behind).
+
+```bash
+./delete-traefik-nlbs.sh
+```
+
+Uses `us-west-2` unless you set `AWS_REGION`. Requires AWS CLI and credentials for the account that owns the load balancers.
+
+---
+
 ## Maintenance Scripts
 
 ### `fix-cloud-provider.sh`
@@ -163,6 +174,7 @@ scripts/
 ├── setup-vpn-tls.sh             # OpenVPN: Let's Encrypt + Route53 + Secrets Manager
 ├── get-rke-ssh-key.sh          # SSH key retrieval
 ├── get-openvpn-ssh-key.sh      # OpenVPN SSH key retrieval
+├── delete-traefik-nlbs.sh      # Remove orphaned Traefik NLBs after destroy
 ├── fix-cloud-provider.sh        # One-time cloud provider fix
 ├── patch-provider-ids.sh        # One-time providerID fix
 └── expand-volumes/              # Volume management tools

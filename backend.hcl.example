@@ -1,0 +1,12 @@
+# Example backend config for Terraform state. Use your own bucket and region.
+# From a component directory: terraform init -backend-config=../backend.hcl
+# (or copy next to the component and use -backend-config=backend.hcl)
+#
+# Backend block in .tf files cannot use variables; override with this file.
+# Set bucket and region for your environment; key is per-component (see each terraform.tf).
+
+bucket         = "your-terraform-state-bucket"
+region         = "us-east-1"
+dynamodb_table = "terraform-state"
+encrypt        = true
+# key            = "openvpn/terraform.tfstate"   # set per component

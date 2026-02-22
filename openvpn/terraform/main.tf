@@ -18,31 +18,23 @@ locals {
 data "terraform_remote_state" "vpc" {
   backend = "s3"
   config = {
-    bucket = "mikey-com-terraformstate"
-    key    = "Network"
-    region = "us-east-1"
+    bucket = var.vpc_state_bucket
+    key    = var.vpc_state_key
+    region = var.vpc_state_region
   }
 }
 
-# Get subnet ID - use specified subnet or first PUBLIC subnet from VPC
+# Get subnet and VPC IDs from remote state (no AWS subnet lookup — allows destroy when subnet is gone)
 locals {
   subnet_id = var.subnet_id != "" ? var.subnet_id : data.terraform_remote_state.vpc.outputs.public_subnets[0]
-}
-
-# Reference existing VPC resources from the VPC module
-data "aws_subnet" "selected" {
-  id = local.subnet_id
-}
-
-data "aws_vpc" "selected" {
-  id = data.aws_subnet.selected.vpc_id
+  vpc_id    = var.vpc_id != "" ? var.vpc_id : data.terraform_remote_state.vpc.outputs.vpc_id
 }
 
 # Security Group for OpenVPN
 resource "aws_security_group" "openvpn" {
   name        = "${var.environment}-openvpn-sg"
   description = "Security group for OpenVPN server"
-  vpc_id      = data.aws_vpc.selected.id
+  vpc_id      = local.vpc_id
 
   # SSH access from your IP (auto-detected or specified)
   ingress {

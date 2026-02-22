@@ -16,6 +16,32 @@ End-to-end **Infrastructure as Code** for a production-style AWS + Kubernetes en
 
 Suitable as a reference for multi-account AWS, Kubernetes operations, and ingress/TLS patterns.
 
+## Terraform state backend (required setup)
+
+**You must set the state bucket, region, and DynamoDB table for your environment.** Terraform does not allow variables in `backend` blocks, so each component has these values hardcoded. Before running `terraform init` / `apply` in any component, update the `backend "s3" { ... }` block in that component’s file below.
+
+**Files to update (each contains a backend block):**
+
+| File | Purpose |
+|------|---------|
+| `buckets/dev-account/terraform.tf` | Buckets (logging, etcd backups) |
+| `deployments/dev-cluster/1-infrastructure/terraform.tf` | Dev cluster infrastructure |
+| `deployments/dev-cluster/2-applications/terraform.tf` | Dev cluster applications |
+| `openvpn/terraform/terraform.tf` | OpenVPN server |
+| `Organization/providers.tf` | AWS Organization |
+| `RKE-cluster/dev-cluster/ec2/terraform.tf` | RKE EC2 nodes |
+| `RKE-cluster/dev-cluster/RKE/terraform.tf` | RKE cluster |
+| `route53/delegate/main.tf` | Route53 delegation |
+| `route53/dns-security/terraform.tf` | Route53 DNS security |
+| `s3backing/backend.tf` | S3 state backing |
+| `TF_org-user/providers.tf` | Terraform execution roles |
+| `vpc/providers.tf` | VPC (if using lowercase vpc) |
+| `VPC/providers.tf` | VPC (if using uppercase VPC) |
+
+**To find every file that needs to be modified:** search the repo for `mikey-com-terraformstate`. That includes the backend blocks above and variable defaults (e.g. openvpn and RKE remote-state bucket variables).
+
+In each file, set `bucket`, `region`, and `dynamodb_table` inside the `backend "s3" { }` block to your state bucket and DynamoDB lock table (and update any variable defaults that reference the bucket).
+
 # Bootstrap
 
 ## Step 1: Organization Setup
@@ -67,13 +93,6 @@ vpn_connection_info = {
 - This subnet is added to the RKE security groups to allow kubectl/k9s access from VPN-connected clients
 - If you change the VPN IP Network in the OpenVPN admin panel, you must also update the `cluster_cidr_blocks` in `RKE-cluster/dev-cluster/RKE/main.tf`
 
-**DNS (required for internal resolution):** In the Admin UI go to **Configuration → VPN Settings**. In the DNS section:
-- Enable **Have clients use specific DNS servers**
-- **Primary DNS Server:** `10.8.0.2` (AWS VPC internal DNS for dev VPC)
-- **Secondary DNS Server:** `8.8.8.8`
-- **DNS Resolution Zones (optional):** Add the domain you use for internal services (e.g. `foobar.support`) so VPN clients resolve those hostnames via the VPC DNS (e.g. `nginx.dev.foobar.support`, `rancher.dev.foobar.support`).
-- Save and Update Running Server. See `openvpn/README.md` for more detail.
-
 Get the OpenVPN SSH key (saved to ~/.ssh/openvpn-ssh-keypair.pem):
 ```bash
 ./scripts/get-openvpn-ssh-key.sh
@@ -99,6 +118,13 @@ Download the users profile
 https://54.214.242.159:943/
 login and download the profile. User-locked or autologin. Again, since this is a lab and not production on server locked to a specific IP address, I am using the autologin profile.
 
+**DNS (required for internal resolution):** In the Admin UI go to **Configuration → VPN Settings**. In the DNS section:
+- Enable **Have clients use specific DNS servers**
+- **Primary DNS Server:** `10.8.0.2` (AWS VPC internal DNS for dev VPC)
+- **Secondary DNS Server:** `8.8.8.8`
+- **DNS Resolution Zones (optional):** Add the domain you use for internal services (e.g. `foobar.support`) so VPN clients resolve those hostnames via the VPC DNS (e.g. `nginx.dev.foobar.support`, `rancher.dev.foobar.support`).
+- Save and Update Running Server. See `openvpn/README.md` for more detail.
+
 ## Step 5: Bring up the EC2 instances
 ```bash
 cd RKE-cluster/dev-cluster/ec2
@@ -110,7 +136,7 @@ terraform apply
 Before proceeding to Step 6, you MUST copy the RKE SSH private key:
 
 ```bash
-# Quick method - uses default secret name (dev-rke2-ssh-keypair)
+# Quick method - uses default secret name (rke-ssh, from RKE-cluster/dev-cluster/ec2)
 ./scripts/get-rke-ssh-key.sh
 
 # Or specify a different secret name

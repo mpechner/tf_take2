@@ -13,9 +13,13 @@ terraform {
       source  = "hashicorp/http"
       version = "~> 3.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 
-  # S3 Backend for state storage
+  # REQUIRED: Set bucket, region, dynamodb_table for your environment (cannot use variables in backend block). See repo README § Terraform state backend.
   backend "s3" {
     bucket         = "mikey-com-terraformstate"
     key            = "openvpn/terraform.tfstate"
@@ -25,9 +29,13 @@ terraform {
   }
 }
 
-# AWS Provider: uses your default credentials (e.g. admin).
+# AWS Provider: assumes terraform-execute role in the target account.
 provider "aws" {
   region = "us-west-2"
+
+  assume_role {
+    role_arn = "arn:aws:iam::${var.account_id}:role/terraform-execute"
+  }
 
   default_tags {
     tags = {

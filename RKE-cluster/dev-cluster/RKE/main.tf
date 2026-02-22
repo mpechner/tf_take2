@@ -1,10 +1,10 @@
 data "terraform_remote_state" "ec2" {
   backend = "s3"
   config = {
-    bucket         = "mikey-com-terraformstate"
-    use_lockfile   = true
-    key            = "RKE-cluster_dev/ec2"
-    region         = "us-east-1"
+    bucket       = var.ec2_state_bucket
+    key          = var.ec2_state_key
+    region       = var.ec2_state_region
+    use_lockfile = true
   }
 }
 

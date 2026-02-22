@@ -19,7 +19,13 @@ variable "account_id" {
 }
 
 variable "subnet_id" {
-  description = "Subnet ID where the OpenVPN server will be deployed (optional - will use first private subnet if not specified)"
+  description = "Subnet ID where the OpenVPN server will be deployed. If set, use this (and set vpc_id when deploying in a different account than VPC state)."
+  type        = string
+  default     = ""
+}
+
+variable "vpc_id" {
+  description = "VPC ID for the security group. Set when deploying in a different account than the VPC remote state (so the state's vpc_id does not exist in this account)."
   type        = string
   default     = ""
 }
@@ -47,5 +53,24 @@ variable "comcast_ip" {
   description = "Your public IP address for restricted access (CIDR format). Leave empty to auto-detect your current IP."
   type        = string
   default     = ""  # Empty = auto-detect, or specify like "1.2.3.4/32"
+}
+
+# VPC remote state (used to read subnet/VPC IDs; set to your own state bucket if different)
+variable "vpc_state_bucket" {
+  description = "S3 bucket containing the VPC Terraform state (used by data.terraform_remote_state.vpc)"
+  type        = string
+  default     = "mikey-com-terraformstate"
+}
+
+variable "vpc_state_key" {
+  description = "S3 object key for the VPC Terraform state (e.g. Network, vpc/terraform.tfstate)"
+  type        = string
+  default     = "Network"
+}
+
+variable "vpc_state_region" {
+  description = "AWS region where the VPC state bucket lives"
+  type        = string
+  default     = "us-east-1"
 }
 

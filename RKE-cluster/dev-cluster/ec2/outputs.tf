@@ -29,15 +29,13 @@ output "next_steps" {
     ✓ All EC2 instances are ready!
     
     Next steps:
-    1. Copy the RKE SSH key from Secrets Manager:
-       Secret name: ${aws_secretsmanager_secret.rke_ssh_keypair.name}
-       Save private key to: ~/.ssh/rke-key
-       Set permissions: chmod 600 ~/.ssh/rke-key
+    1. Get the RKE SSH key (saved to ~/.ssh/rke-key):
+       ../../../scripts/get-rke-ssh-key.sh
     
     2. Make sure you're connected to the VPN
     
     3. Deploy RKE cluster:
-       cd ../rke
+       cd ../RKE
        terraform apply
   EOT
 }

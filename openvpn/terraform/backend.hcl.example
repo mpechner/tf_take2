@@ -1,0 +1,8 @@
+# Copy to backend.hcl and run: terraform init -backend-config=backend.hcl
+# Use your own state bucket and region.
+
+bucket         = "your-terraform-state-bucket"
+key            = "openvpn/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "terraform-state"
+encrypt        = true

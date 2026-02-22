@@ -18,7 +18,7 @@ terraform apply
 terraform destroy
 ```
 
-State is stored remotely in S3 (`mikey-com-terraformstate` bucket) with DynamoDB locking.
+State is stored remotely in S3 with DynamoDB locking. **The backend block cannot use variables;** each component has `bucket`, `region`, and `dynamodb_table` hardcoded. For a new environment, these must be updated in each file that contains a backend block. See **README.md § Terraform state backend (required setup)** for the full list of files to update: `buckets/dev-account/terraform.tf`, `deployments/dev-cluster/1-infrastructure/terraform.tf`, `deployments/dev-cluster/2-applications/terraform.tf`, `openvpn/terraform/terraform.tf`, `Organization/providers.tf`, `RKE-cluster/dev-cluster/ec2/terraform.tf`, `RKE-cluster/dev-cluster/RKE/terraform.tf`, `route53/delegate/main.tf`, `route53/dns-security/terraform.tf`, `s3backing/backend.tf`, `TF_org-user/providers.tf`, `vpc/providers.tf`, `VPC/providers.tf`.
 
 ## Deployment Order
 

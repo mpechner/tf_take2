@@ -35,25 +35,22 @@ A complete OpenVPN Access Server solution using **Terraform** for infrastructure
 
 ### 1. Clone and Setup
 ```bash
-cd openvpn
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+cd openvpn/devvpn
+# Optional: cp backend.hcl.example backend.hcl and terraform init -backend-config=backend.hcl
 ```
 
 ### 2. Configure Variables
-Edit `terraform/terraform.tfvars`:
+Use defaults or create `devvpn/terraform.tfvars` to override:
 ```hcl
-# Required: Update these values
-subnet_id = "subnet-your-actual-subnet-id"
-key_pair_name = "your-aws-key-pair-name"
-
-# Optional: Your IP will be auto-detected. Override only if needed:
+# Optional: subnet_id and vpc_id default from VPC remote state
+# Optional: Your IP is auto-detected; override if needed:
 # comcast_ip = "203.0.113.1/32"
 ```
 
 ### 3. Run Terraform
 
 ```bash
-cd openvpn/terraform
+cd openvpn/devvpn
 terraform init
 terraform plan    # optional: preview
 terraform apply
@@ -115,13 +112,18 @@ Visit: `https://YOUR_SERVER_IP:944/`
 
 ```
 openvpn/
-├── terraform/                 # Infrastructure as Code (EC2, EIP, security group)
+├── module/                    # Reusable OpenVPN Terraform module
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── userdata.sh
+├── devvpn/                    # Dev environment (uses module)
 │   ├── main.tf
 │   ├── variables.tf
 │   ├── outputs.tf
 │   ├── terraform.tf
-│   ├── userdata.sh
-│   └── terraform.tfvars
+│   ├── sshkey.tf
+│   └── backend.hcl.example
 └── README.md
 ```
 
@@ -141,7 +143,7 @@ Your Terraform state and OpenVPN resources (subnets, secrets, EC2) are in **one 
 aws sts get-caller-identity
 
 # Then use a profile or role that targets the OpenVPN account (e.g. 364082771643)
-cd openvpn/terraform
+cd openvpn/devvpn
 AWS_PROFILE=your-dev-account-profile terraform apply
 ```
 
@@ -207,7 +209,7 @@ By default, Terraform automatically detects your public IP address and uses it t
 detected_admin_ip = "203.0.113.1/32"
 ```
 
-To override auto-detection and use a specific IP, set it in `terraform.tfvars`:
+To override auto-detection and use a specific IP, set it in `devvpn/terraform.tfvars`:
 ```hcl
 comcast_ip = "203.0.113.1/32"
 ```
@@ -263,7 +265,7 @@ If you can't access internal services (e.g., `nginx.dev.foobar.support`):
 
 #### SSH Connection Failed
 - Check security group allows SSH from your IP
-- Verify key pair name in terraform.tfvars
+- Use the private key from Secrets Manager (openvpn-ssh) or the `ssh_command` output
 - Ensure instance is running and healthy
 
 #### OpenVPN Access Server Issues
@@ -293,7 +295,7 @@ openssl verify -CAfile /etc/openvpn/server/ca.crt /etc/openvpn/server/server.crt
 
 ### Destroy Infrastructure
 ```bash
-cd terraform
+cd openvpn/devvpn
 terraform destroy
 ```
 

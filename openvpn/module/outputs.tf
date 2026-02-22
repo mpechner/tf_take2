@@ -1,4 +1,4 @@
-# OpenVPN Terraform Outputs
+# OpenVPN Module Outputs
 
 output "openvpn_server_id" {
   description = "ID of the OpenVPN server instance"
@@ -20,34 +20,26 @@ output "openvpn_security_group_id" {
   value       = aws_security_group.openvpn.id
 }
 
-output "detected_admin_ip" {
-  description = "Detected or configured admin IP address used for security group rules"
-  value       = local.admin_ip
-}
-
-
 output "ssh_command" {
   description = "SSH command to connect to the OpenVPN server"
-  value       = "ssh -i ~/.ssh/${aws_key_pair.openvpn_ssh.key_name}.pem ${var.ssh_username}@${aws_eip.openvpn.public_ip}"
+  value       = "ssh -i ~/.ssh/${var.key_name}.pem ${var.ssh_username}@${aws_eip.openvpn.public_ip}"
 }
 
 output "vpn_connection_info" {
   description = "OpenVPN Access Server connection information"
   value = {
-    server_ip   = aws_eip.openvpn.public_ip
-    admin_url   = "https://${aws_eip.openvpn.public_ip}:943/admin"
-    client_url  = "https://${aws_eip.openvpn.public_ip}:943/"
+    server_ip    = aws_eip.openvpn.public_ip
+    admin_url    = "https://${aws_eip.openvpn.public_ip}:943/admin"
+    client_url   = "https://${aws_eip.openvpn.public_ip}:943/"
     default_user = "openvpn"
   }
 }
 
-# Set these in Admin UI: Configuration → VPN Settings (DNS section)
 output "vpn_dns_settings" {
-  description = "DNS to set in Configuration → VPN Settings so the server pushes AWS internal DNS and 8.8.8.8 to clients"
+  description = "DNS to set in Configuration → VPN Settings"
   value = {
-    primary_dns   = "10.8.0.2"   # AWS VPC DNS resolver (dev VPC 10.8.0.0/16)
-    secondary_dns = "8.8.8.8"    # Google DNS for internet
+    primary_dns   = "10.8.0.2"
+    secondary_dns = "8.8.8.8"
     ui_path       = "Configuration → VPN Settings"
   }
 }
-

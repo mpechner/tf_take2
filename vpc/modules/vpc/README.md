@@ -16,6 +16,50 @@ $ terraform apply
 
 Note that this example may create resources which can cost money (AWS Elastic IP, for example). Run `terraform destroy` when you don't need these resources.
 
+## VPC Endpoints (optional, for Lambda / private workloads without NAT)
+
+When `enable_vpc_endpoints = true`, the module creates **interface endpoints** (PrivateLink) and a **DynamoDB gateway endpoint** so workloads in private subnets (e.g. Lambda) can access AWS services without NAT. The **S3 gateway endpoint** is always created by the existing `vpc_endpoints` block; this section adds the rest.
+
+### How to enable
+
+Set `enable_vpc_endpoints = true` and pass the security group ID(s) of the workloads that will use the endpoints (e.g. Lambda):
+
+```hcl
+enable_vpc_endpoints   = true
+allowed_source_sg_ids  = [aws_security_group.lambda.id]
+```
+
+Optional: `endpoint_subnet_ids` (default: private subnets), `private_route_table_ids` (default: VPC private route tables), `tags`, and overrides `vpc_endpoint_services_interface` / `vpc_endpoint_services_gateway`.
+
+### Endpoints created (when enabled)
+
+| Service | Type | Purpose |
+|--------|------|--------|
+| **ecr.api** | Interface | ECR API (pull image metadata) |
+| **ecr.dkr** | Interface | ECR image pull |
+| **secretsmanager** | Interface | TLS/SSH secrets |
+| **kms** | Interface | CMK for Secrets Manager / ECR |
+| **logs** | Interface | CloudWatch Logs |
+| **ssm**, **ssmmessages**, **ec2messages** | Interface | SSM Run Command (install cert on EC2) |
+| **sts** | Interface | Assume-role / identity calls |
+| **lambda** | Interface | Lambda API (invoke, etc.) |
+| **dynamodb** | Gateway | Lock table (no NAT) |
+| **s3** | Gateway | Already created by this module (unchanged) |
+
+Private DNS is enabled on all interface endpoints so SDKs resolve AWS hostnames to the endpoint IPs. The DynamoDB gateway is attached only to **private** route tables.
+
+### Cost and per-region caveats
+
+- **Interface endpoints** are billed per AZ and per hour. Endpoints are created in the AZs of `endpoint_subnet_ids` (default: one per private subnet AZ). Disable when not needed to avoid cost.
+- **Gateway endpoints** (DynamoDB, S3) do not incur hourly charges.
+- To disable: set `enable_vpc_endpoints = false` and apply; then remove any references to `vpc_endpoint_sg_id` from Lambda (or other) configs.
+
+### Outputs
+
+- `vpc_endpoint_ids` – map of service name → endpoint ID (when enabled).
+- `vpc_endpoint_sg_id` – security group for interface endpoints; attach Lambda (or other workloads) to this SG, or allow this SG in the endpoint SG's `allowed_source_sg_ids`.
+- `private_subnet_ids` – alias for `private_subnets`.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 

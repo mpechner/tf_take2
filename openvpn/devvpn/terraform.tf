@@ -1,5 +1,4 @@
-# OpenVPN Terraform Configuration
-# This file configures Terraform providers and backend
+# OpenVPN dev environment - Terraform config and backend
 
 terraform {
   required_version = ">= 1.0"
@@ -19,17 +18,15 @@ terraform {
     }
   }
 
-  # REQUIRED: Set bucket, region, dynamodb_table for your environment (cannot use variables in backend block). See repo README § Terraform state backend.
   backend "s3" {
     bucket         = "mikey-com-terraformstate"
-    key            = "openvpn/terraform.tfstate"
+    key            = "openvpn/devvpn/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "terraform-state"
     encrypt        = true
   }
 }
 
-# AWS Provider: assumes terraform-execute role in the target account.
 provider "aws" {
   region = "us-west-2"
 
@@ -46,4 +43,3 @@ provider "aws" {
     }
   }
 }
-

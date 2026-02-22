@@ -41,4 +41,48 @@ variable     db_subnets {
 variable     db_subnet_names {
     default = [ "dev-db-us-west-2a", "dev-db-us-west-2b", "dev-db-us-west-2c" ]
 }
-    
+
+# VPC endpoints (Lambda / private subnet access without NAT)
+variable "enable_vpc_endpoints" {
+  description = "Create interface + DynamoDB gateway endpoints for private subnet access."
+  type        = bool
+  default     = true
+}
+variable "endpoint_subnet_ids" {
+  description = "Subnet IDs for interface endpoints; default empty = use private subnets."
+  type        = list(string)
+  default     = []
+}
+variable "private_route_table_ids" {
+  description = "Route table IDs for DynamoDB gateway; default empty = use VPC private route tables."
+  type        = list(string)
+  default     = []
+}
+variable "allowed_source_sg_ids" {
+  description = "Security group IDs allowed to reach interface endpoints (e.g. Lambda SG)."
+  type        = list(string)
+  default     = []
+}
+variable "tags" {
+  description = "Tags merged with module tags for endpoints."
+  type        = map(string)
+  default     = {}
+}
+variable "vpc_endpoint_services_interface" {
+  description = "Interface endpoint services (e.g. ecr.api, logs, lambda). Add events if Lambda manages EventBridge."
+  type        = list(string)
+  default     = ["ecr.api", "ecr.dkr", "secretsmanager", "kms", "logs", "ssm", "ssmmessages", "ec2messages", "sts", "lambda"]
+}
+variable "vpc_endpoint_services_gateway" {
+  description = "Gateway endpoint services. Default dynamodb only (S3 already exists)."
+  type        = list(string)
+  default     = ["dynamodb"]
+}
+variable "enable_nat_gateway" {
+  type    = bool
+  default = true
+}
+variable "single_nat_gateway" {
+  type    = bool
+  default = true
+}

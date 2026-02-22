@@ -539,3 +539,22 @@ output "vpc_endpoints" {
   description = "Array containing the full resource object and attributes for all endpoints created"
   value       = module.vpc_endpoints.endpoints
 }
+
+# When enable_vpc_endpoints = true: map of service name -> endpoint id (interface + gateway, excluding S3).
+output "vpc_endpoint_ids" {
+  description = "Map of VPC endpoint service name to endpoint ID (interface and gateway endpoints created by this module when enable_vpc_endpoints = true)"
+  value = merge(
+    { for k, ep in aws_vpc_endpoint.interface : k => ep.id },
+    { for k, ep in aws_vpc_endpoint.gateway : k => ep.id }
+  )
+}
+
+output "vpc_endpoint_sg_id" {
+  description = "Security group ID for VPC interface endpoints; null when enable_vpc_endpoints = false. Use for Lambda (or other private workloads) that call these endpoints."
+  value       = length(aws_security_group.vpc_endpoints_interface) > 0 ? aws_security_group.vpc_endpoints_interface[0].id : null
+}
+
+output "private_subnet_ids" {
+  description = "List of private subnet IDs (alias for private_subnets for consistency)"
+  value       = module.vpc.private_subnets
+}

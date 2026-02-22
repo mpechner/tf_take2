@@ -27,7 +27,7 @@ Suitable as a reference for multi-account AWS, Kubernetes operations, and ingres
 | `buckets/dev-account/terraform.tf` | Buckets (logging, etcd backups) |
 | `deployments/dev-cluster/1-infrastructure/terraform.tf` | Dev cluster infrastructure |
 | `deployments/dev-cluster/2-applications/terraform.tf` | Dev cluster applications |
-| `openvpn/terraform/terraform.tf` | OpenVPN server |
+| `openvpn/devvpn/terraform.tf` | OpenVPN server |
 | `Organization/providers.tf` | AWS Organization |
 | `RKE-cluster/dev-cluster/ec2/terraform.tf` | RKE EC2 nodes |
 | `RKE-cluster/dev-cluster/RKE/terraform.tf` | RKE cluster |
@@ -75,7 +75,8 @@ cd ..
 
 ## Step 4: VPN
 ```bash
-cd openvpn/terraform
+cd openvpn/devvpn
+terraform init
 terraform apply
 ```
 The output will provide important information for connecting. Since the security group is using my comcast public IP feel safe with defaults. BUT WE ALL KNOW THIS IS BAD! The default password is not set.
@@ -93,10 +94,13 @@ vpn_connection_info = {
 - This subnet is added to the RKE security groups to allow kubectl/k9s access from VPN-connected clients
 - If you change the VPN IP Network in the OpenVPN admin panel, you must also update the `cluster_cidr_blocks` in `RKE-cluster/dev-cluster/RKE/main.tf`
 
-Get the OpenVPN SSH key (saved to ~/.ssh/openvpn-ssh-keypair.pem):
+Get the OpenVPN SSH key (saved to ~/.ssh/openvpn-ssh-keypair.pem). From repo root, or from `openvpn/devvpn` use `../../scripts/`:
 ```bash
+# From repo root:
 ./scripts/get-openvpn-ssh-key.sh
-# Or with a different secret name: ./scripts/get-openvpn-ssh-key.sh <secret-name>
+# From openvpn/devvpn:
+../../scripts/get-openvpn-ssh-key.sh
+# Or with a different secret name: .../get-openvpn-ssh-key.sh <secret-name>
 ```
 
 Set the default password (use the server IP from terraform output):

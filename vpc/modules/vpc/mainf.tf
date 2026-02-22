@@ -104,6 +104,84 @@ module "vpc_endpoints_nocreate" {
 }
 
 ################################################################################
+# VPC Endpoints for Lambda / private workloads (no NAT)
+# Enabled when enable_vpc_endpoints = true. S3 gateway already above.
+################################################################################
+
+locals {
+  # Interface endpoints allow only one subnet per AZ. Default: one private subnet per AZ (VPC module orders subnets by AZ).
+  endpoint_subnet_ids          = length(var.endpoint_subnet_ids) > 0 ? var.endpoint_subnet_ids : slice(module.vpc.private_subnets, 0, min(length(module.vpc.private_subnets), length(var.azs)))
+  endpoint_private_route_ids   = length(var.private_route_table_ids) > 0 ? var.private_route_table_ids : module.vpc.private_route_table_ids
+  endpoint_tags                = merge(local.tags, var.tags, { Endpoint = "true" })
+  # Gateway endpoints to create: only those in var list that are not s3 (S3 already exists)
+  endpoint_gateway_services    = [for s in var.vpc_endpoint_services_gateway : s if s != "s3"]
+}
+
+# Security group for interface endpoints. Inbound 443 from Lambda SG(s) or private subnet CIDRs.
+resource "aws_security_group" "vpc_endpoints_interface" {
+  count       = var.enable_vpc_endpoints ? 1 : 0
+  name_prefix = "${local.name}-vpc-endpoints-"
+  description = "Allow HTTPS from Lambda (or private subnets) to VPC interface endpoints"
+  vpc_id      = module.vpc.vpc_id
+
+  dynamic "ingress" {
+    for_each = length(var.allowed_source_sg_ids) > 0 ? [1] : []
+    content {
+      description     = "HTTPS from allowed security groups (e.g. Lambda)"
+      from_port       = 443
+      to_port         = 443
+      protocol        = "tcp"
+      security_groups = var.allowed_source_sg_ids
+    }
+  }
+  dynamic "ingress" {
+    for_each = length(var.allowed_source_sg_ids) == 0 ? [1] : []
+    content {
+      description = "HTTPS from private subnets (fallback when no allowed_source_sg_ids)"
+      from_port    = 443
+      to_port      = 443
+      protocol     = "tcp"
+      cidr_blocks  = module.vpc.private_subnets_cidr_blocks
+    }
+  }
+
+  egress {
+    description = "Allow all outbound; endpoints need to reach AWS and VPC DNS."
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.endpoint_tags, { Name = "${local.name}-vpc-endpoints-sg" })
+}
+
+# Interface endpoints (PrivateLink): ECR, Secrets Manager, KMS, Logs, SSM trio, STS.
+# One per AZ in endpoint_subnet_ids; Private DNS enabled so SDK resolves to endpoint IPs.
+resource "aws_vpc_endpoint" "interface" {
+  for_each            = var.enable_vpc_endpoints ? toset(var.vpc_endpoint_services_interface) : toset([])
+  vpc_id              = module.vpc.vpc_id
+  service_name        = "com.amazonaws.${var.region}.${each.key}"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = local.endpoint_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints_interface[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.endpoint_tags, { Name = "${local.name}-${each.key}" })
+}
+
+# Gateway endpoints: DynamoDB (S3 already exists in module.vpc_endpoints).
+resource "aws_vpc_endpoint" "gateway" {
+  for_each          = var.enable_vpc_endpoints ? toset(local.endpoint_gateway_services) : toset([])
+  vpc_id            = module.vpc.vpc_id
+  service_name      = "com.amazonaws.${var.region}.${each.key}"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = local.endpoint_private_route_ids
+
+  tags = merge(local.endpoint_tags, { Name = "${local.name}-${each.key}-gateway" })
+}
+
+################################################################################
 # Supporting Resources
 ################################################################################
 

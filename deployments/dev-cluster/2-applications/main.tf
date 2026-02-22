@@ -369,7 +369,8 @@ module "nginx_sample" {
 # Then run terraform destroy. If you skip that, destroy will check for NLBs and fail with instructions if any exist.
 # ------------------------------------------------------------------------------
 # Run first on destroy: check for Traefik NLBs and print warning + instruction to run script if any exist.
-# Created last so it is destroyed first when running terraform destroy from 2-applications.
+# Depends on all other resources so it is destroyed first (Terraform destroys dependents before dependencies).
+# Then the provisioner runs; if NLBs exist it exits 1 and no other resource has been destroyed yet.
 resource "null_resource" "pre_destroy_delete_traefik_nlbs" {
   triggers = {
     nginx_sample = "${module.nginx_sample.namespace}/${module.nginx_sample.service_name}"
@@ -404,7 +405,22 @@ resource "null_resource" "pre_destroy_delete_traefik_nlbs" {
     EOT
   }
 
-  depends_on = [module.nginx_sample]
+  depends_on = [
+    kubernetes_namespace_v1.nginx_sample,
+    kubernetes_namespace_v1.cattle_system,
+    kubernetes_manifest.traefik_dashboard_cert,
+    kubernetes_manifest.traefik_dashboard_ingressroute,
+    helm_release.rancher,
+    kubernetes_manifest.redirect_http_to_https,
+    kubernetes_manifest.redirect_http_to_https_route,
+    kubernetes_manifest.nginx_ingressroute_http,
+    kubernetes_manifest.nginx_cert,
+    kubernetes_manifest.nginx_ingressroute,
+    kubernetes_manifest.rancher_cert,
+    kubernetes_manifest.rancher_ingressroute,
+    module.applications,
+    module.nginx_sample,
+  ]
 }
 
 output "nginx_url" {

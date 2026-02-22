@@ -101,6 +101,16 @@ terraform apply
 
 ### Full Rebuild
 
+**Before destroying**, delete Traefik NLBs so destroy does not hang (from repo root or from these directories):
+
+```bash
+# Use cluster account role if your default credentials are not in that account
+AWS_ASSUME_ROLE_ARN="arn:aws:iam::ACCOUNT_ID:role/terraform-execute" ../../../scripts/delete-traefik-nlbs.sh
+# Or: ../../../scripts/delete-traefik-nlbs.sh arn:aws:iam::ACCOUNT_ID:role/terraform-execute
+```
+
+Then destroy in reverse order:
+
 ```bash
 cd 2-applications
 terraform destroy
@@ -109,10 +119,13 @@ cd ../1-infrastructure
 terraform destroy
 
 # Then redeploy in order
+cd ../1-infrastructure
 terraform apply
 cd ../2-applications
 terraform apply
 ```
+
+If you skip the script, `terraform destroy` will fail with instructions when it detects Traefik NLBs; run the suggested command and destroy again.
 
 ## Troubleshooting
 

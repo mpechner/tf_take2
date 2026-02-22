@@ -128,6 +128,18 @@ kubectl get secrets -n <namespace> | grep backend-ca
 kubectl get certificates -n <namespace>
 ```
 
+## Destroy
+
+**Before running `terraform destroy`**, delete the Traefik NLBs so destroy does not hang (same script as 1-infrastructure; NLBs are created by 1-infra but 2-app destroy checks for them first):
+
+```bash
+# From 2-applications (use your terraform-execute role ARN for the cluster account)
+AWS_ASSUME_ROLE_ARN="arn:aws:iam::ACCOUNT_ID:role/terraform-execute" bash ../../../scripts/delete-traefik-nlbs.sh
+# Or: bash ../../../scripts/delete-traefik-nlbs.sh arn:aws:iam::ACCOUNT_ID:role/terraform-execute
+```
+
+If you skip the script, **terraform destroy will detect existing Traefik NLBs and fail** with a copy-pastable command; run it, then run `terraform destroy` again. See `../1-infrastructure/README.md` and `scripts/README.md` for details.
+
 ## Important Notes
 
 - Let's Encrypt staging has high rate limits (use for testing)

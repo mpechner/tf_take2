@@ -210,7 +210,7 @@ module "traefik" {
   create_namespace = true
   repository       = "https://traefik.github.io/charts"
   chart            = "traefik"
-  chart_version    = "24.0.0"
+  chart_version    = "30.0.0" # Traefik v3.1: uses EndpointSlices (fixes "v1 Endpoints is deprecated" warning on k8s 1.33+)
   service_type     = "LoadBalancer"
   set = [
     {
@@ -228,6 +228,15 @@ module "traefik" {
     # Dashboard API must be enabled so api@internal exists; IngressRoute is in 2-applications (host + TLS)
     api = {
       dashboard = true
+    }
+    # Chart 30+ expects ports.<name>.expose as a dict keyed by service name (e.g. default: true)
+    ports = {
+      web = {
+        expose = { default = true }
+      }
+      websecure = {
+        expose = { default = true }
+      }
     }
     # IngressRoutes in traefik namespace reference services in nginx-sample and cattle-system; required for routes to work
     providers = {
@@ -305,6 +314,48 @@ resource "kubernetes_service_v1" "traefik_internal" {
   depends_on = [module.traefik]
 }
 
+# Wait for both Traefik NLBs (public + internal) to be provisioned and active before apply completes
+resource "null_resource" "wait_for_nlbs" {
+  triggers = {
+    traefik          = "${module.traefik.namespace}/${module.traefik.name}"
+    traefik_internal = kubernetes_service_v1.traefik_internal.id
+    region           = var.aws_region
+    role_arn         = var.aws_assume_role_arn
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      REGION="${var.aws_region}"
+      ROLE_ARN="${var.aws_assume_role_arn}"
+      echo "Assuming terraform-execute role for NLB wait..."
+      CREDS=$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "tf-wait-nlbs" --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+      export AWS_ACCESS_KEY_ID=$(echo $CREDS | awk '{print $1}')
+      export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | awk '{print $2}')
+      export AWS_SESSION_TOKEN=$(echo $CREDS | awk '{print $3}')
+      echo "Waiting for both Traefik NLBs (public and internal) to be provisioned..."
+      for i in $(seq 1 90); do
+        COUNT=$(aws elbv2 describe-load-balancers --region "$REGION" \
+          --query 'length(LoadBalancers[?starts_with(LoadBalancerName, `k8s-traefik`)])' --output text 2>/dev/null || echo "0")
+        if [ "$COUNT" = "2" ]; then
+          BAD=$(aws elbv2 describe-load-balancers --region "$REGION" \
+            --query 'LoadBalancers[?starts_with(LoadBalancerName, `k8s-traefik`) && State.Code!=`active`].LoadBalancerName' --output text 2>/dev/null || true)
+          if [ -z "$BAD" ]; then
+            echo "Both NLBs are provisioned and active."
+            exit 0
+          fi
+        fi
+        echo "Waiting for NLBs... attempt $i/90 (found $COUNT)"
+        sleep 5
+      done
+      echo "Timeout waiting for both NLBs"
+      exit 1
+    EOT
+  }
+
+  depends_on = [module.traefik, kubernetes_service_v1.traefik_internal]
+}
+
 # Wait for AWS Load Balancer Controller webhook to be ready
 resource "null_resource" "wait_for_aws_lb_controller" {
   triggers = {
@@ -334,14 +385,18 @@ resource "null_resource" "wait_for_aws_lb_controller" {
   depends_on = [helm_release.aws_load_balancer_controller]
 }
 
-# Run during destroy: delete NLBs/target groups, then repeatedly strip finalizers so Services can finish deleting
-# even when the controller adds finalizers after Terraform sends DELETE. No depends_on so this can run in
-# parallel with Service destroy; the retry loop removes finalizers after the controller attaches them.
-resource "null_resource" "cleanup_nlbs_on_destroy" {
+# ------------------------------------------------------------------------------
+# DESTROY: Before running terraform destroy here, delete Traefik NLBs first:
+#   ./scripts/delete-traefik-nlbs.sh   (from repo root; set AWS_REGION; set AWS_ASSUME_ROLE_ARN to terraform-execute if not in cluster account)
+# Then run terraform destroy. If you skip that, destroy will check for NLBs and fail with instructions if any exist.
+# ------------------------------------------------------------------------------
+# Run first on destroy: check for Traefik NLBs and print warning + instruction to run script if any exist.
+# Created last (depends on wait_for_nlbs) so it is destroyed first.
+resource "null_resource" "pre_destroy_delete_traefik_nlbs" {
   triggers = {
-    traefik_internal = kubernetes_service_v1.traefik_internal.id
-    traefik_release  = "${module.traefik.namespace}/${module.traefik.name}"
-    region           = var.aws_region
+    wait_for_nlbs = null_resource.wait_for_nlbs.id
+    region        = var.aws_region
+    role_arn      = var.aws_assume_role_arn
   }
 
   provisioner "local-exec" {
@@ -349,14 +404,65 @@ resource "null_resource" "cleanup_nlbs_on_destroy" {
     command = <<-EOT
       set -e
       REGION="${self.triggers.region}"
-      echo "Cleaning up NLBs and target groups..."
-      for arn in $(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[?starts_with(LoadBalancerName, `k8s-traefik`)].LoadBalancerArn' --output text 2>/dev/null); do
-        [ -n "$arn" ] && aws elbv2 delete-load-balancer --load-balancer-arn "$arn" --region "$REGION" && echo "Deleted NLB $arn"
-      done
-      for arn in $(aws elbv2 describe-target-groups --region "$REGION" --query 'TargetGroups[?starts_with(TargetGroupName, `k8s-traefik`)].TargetGroupArn' --output text 2>/dev/null); do
-        [ -n "$arn" ] && aws elbv2 delete-target-group --target-group-arn "$arn" --region "$REGION" && echo "Deleted TG $arn"
-      done
-      echo "Stripping finalizers from LoadBalancer Services (retry for 3 min so controller cannot re-add)..."
+      ROLE_ARN="${self.triggers.role_arn}"
+      echo "Assuming terraform-execute role for NLB check..."
+      CREDS=$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "tf-destroy-nlb-check" --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+      export AWS_ACCESS_KEY_ID=$(echo $CREDS | awk '{print $1}')
+      export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | awk '{print $2}')
+      export AWS_SESSION_TOKEN=$(echo $CREDS | awk '{print $3}')
+      COUNT=$(aws elbv2 describe-load-balancers --region "$REGION" \
+        --query 'length(LoadBalancers[?starts_with(LoadBalancerName, `k8s-traefik`)])' --output text 2>/dev/null || echo "0")
+      if [ "$COUNT" != "0" ]; then
+        echo ""
+        echo "*** WARNING: $COUNT Traefik NLB(s) still exist. Destroy may hang or leave orphaned NLBs. ***"
+        echo "Run from this directory (1-infrastructure) with the cluster account role:"
+        echo "  AWS_ASSUME_ROLE_ARN=\"${self.triggers.role_arn}\" bash ../../../scripts/delete-traefik-nlbs.sh"
+        echo "Or:  bash ../../../scripts/delete-traefik-nlbs.sh ${self.triggers.role_arn}"
+        echo "Then run terraform destroy again."
+        echo ""
+        exit 1
+      fi
+      echo "No Traefik NLBs found; proceeding with destroy."
+    EOT
+  }
+
+  depends_on = [null_resource.wait_for_nlbs]
+}
+
+# Run during destroy: strip finalizers so Services can finish deleting after NLBs are gone.
+resource "null_resource" "cleanup_nlbs_on_destroy" {
+  triggers = {
+    traefik_internal = kubernetes_service_v1.traefik_internal.id
+    traefik_release  = "${module.traefik.namespace}/${module.traefik.name}"
+    region           = var.aws_region
+    role_arn         = var.aws_assume_role_arn
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -e
+      REGION="${self.triggers.region}"
+      ROLE_ARN="${self.triggers.role_arn}"
+      echo "Assuming terraform-execute role for NLB check..."
+      CREDS=$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "tf-destroy-nlb-check" --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+      export AWS_ACCESS_KEY_ID=$(echo $CREDS | awk '{print $1}')
+      export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | awk '{print $2}')
+      export AWS_SESSION_TOKEN=$(echo $CREDS | awk '{print $3}')
+      echo "Checking for Traefik NLBs before destroy..."
+      COUNT=$(aws elbv2 describe-load-balancers --region "$REGION" \
+        --query 'length(LoadBalancers[?starts_with(LoadBalancerName, `k8s-traefik`)])' --output text 2>/dev/null || echo "0")
+      if [ "$COUNT" != "0" ]; then
+        echo ""
+        echo "*** WARNING: $COUNT Traefik NLB(s) still exist. Destroy may hang or leave orphaned NLBs. ***"
+        echo "Run from this directory (1-infrastructure) with the cluster account role:"
+        echo "  AWS_ASSUME_ROLE_ARN=\"${self.triggers.role_arn}\" bash ../../../scripts/delete-traefik-nlbs.sh"
+        echo "Or:  bash ../../../scripts/delete-traefik-nlbs.sh ${self.triggers.role_arn}"
+        echo "Then run terraform destroy again."
+        echo ""
+        exit 1
+      fi
+      echo "No Traefik NLBs found; stripping finalizers from LoadBalancer Services (retry for 3 min)..."
       for i in $(seq 1 18); do
         kubectl patch svc -n traefik traefik-internal -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
         kubectl patch svc -n traefik traefik -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true

@@ -363,6 +363,50 @@ module "nginx_sample" {
   depends_on = [module.applications]
 }
 
+# ------------------------------------------------------------------------------
+# DESTROY: Before running terraform destroy here, delete Traefik NLBs first:
+#   ./scripts/delete-traefik-nlbs.sh   (from repo root; set AWS_REGION; set AWS_ASSUME_ROLE_ARN to terraform-execute if not in cluster account)
+# Then run terraform destroy. If you skip that, destroy will check for NLBs and fail with instructions if any exist.
+# ------------------------------------------------------------------------------
+# Run first on destroy: check for Traefik NLBs and print warning + instruction to run script if any exist.
+# Created last so it is destroyed first when running terraform destroy from 2-applications.
+resource "null_resource" "pre_destroy_delete_traefik_nlbs" {
+  triggers = {
+    nginx_sample = "${module.nginx_sample.namespace}/${module.nginx_sample.service_name}"
+    region       = var.aws_region
+    role_arn     = var.aws_assume_role_arn
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -e
+      REGION="${self.triggers.region}"
+      ROLE_ARN="${self.triggers.role_arn}"
+      echo "Assuming terraform-execute role for NLB check..."
+      CREDS=$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "tf-destroy-nlb-check" --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+      export AWS_ACCESS_KEY_ID=$(echo $CREDS | awk '{print $1}')
+      export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | awk '{print $2}')
+      export AWS_SESSION_TOKEN=$(echo $CREDS | awk '{print $3}')
+      COUNT=$(aws elbv2 describe-load-balancers --region "$REGION" \
+        --query 'length(LoadBalancers[?starts_with(LoadBalancerName, `k8s-traefik`)])' --output text 2>/dev/null || echo "0")
+      if [ "$COUNT" != "0" ]; then
+        echo ""
+        echo "*** WARNING: $COUNT Traefik NLB(s) still exist. Destroy may hang or leave orphaned NLBs. ***"
+        echo "Run from this directory (2-applications) with the cluster account role:"
+        echo "  AWS_ASSUME_ROLE_ARN=\"${self.triggers.role_arn}\" bash ../../../scripts/delete-traefik-nlbs.sh"
+        echo "Or:  bash ../../../scripts/delete-traefik-nlbs.sh ${self.triggers.role_arn}"
+        echo "Then run terraform destroy again."
+        echo ""
+        exit 1
+      fi
+      echo "No Traefik NLBs found; proceeding with destroy."
+    EOT
+  }
+
+  depends_on = [module.nginx_sample]
+}
+
 output "nginx_url" {
   value = <<-EOT
     Try HTTP first (works without TLS):  http://nginx.${var.route53_domain}

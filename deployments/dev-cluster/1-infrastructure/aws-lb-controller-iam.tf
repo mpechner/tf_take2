@@ -306,12 +306,24 @@ resource "null_resource" "iam_policy_cleanup" {
   triggers = {
     policy_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/AWSLoadBalancerControllerIAMPolicy-${var.cluster_name}"
     role_name  = var.attach_to_node_role ? var.node_iam_role_name : ""
+    role_arn   = var.aws_assume_role_arn
   }
 
   provisioner "local-exec" {
     when = destroy
-    # Only self.triggers allowed in destroy provisioners; 2>/dev/null||true so missing attachment is not an error
-    command = "sh -c '[ -n \"${self.triggers.role_name}\" ] && aws iam detach-role-policy --role-name \"${self.triggers.role_name}\" --policy-arn \"${self.triggers.policy_arn}\" 2>/dev/null || true; sleep 10'"
+    command = <<-EOT
+      set -e
+      ROLE_ARN="${lookup(self.triggers, "role_arn", "")}"
+      if [ -n "$ROLE_ARN" ]; then
+        echo "Assuming terraform-execute role for IAM cleanup..."
+        CREDS=$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "tf-iam-cleanup" --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)
+        export AWS_ACCESS_KEY_ID=$(echo $CREDS | awk '{print $1}')
+        export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | awk '{print $2}')
+        export AWS_SESSION_TOKEN=$(echo $CREDS | awk '{print $3}')
+      fi
+      [ -n "${self.triggers.role_name}" ] && aws iam detach-role-policy --role-name "${self.triggers.role_name}" --policy-arn "${self.triggers.policy_arn}" 2>/dev/null || true
+      sleep 10
+    EOT
   }
 }
 

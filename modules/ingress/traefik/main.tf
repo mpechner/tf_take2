@@ -37,14 +37,8 @@ resource "helm_release" "traefik" {
         name  = "api.insecure"
         value = "true"
       },
-      {
-        name  = "ports.web.expose"
-        value = "true"
-      },
-      {
-        name  = "ports.websecure.expose"
-        value = "true"
-      }
+      # Chart 30+ expects ports.<name>.expose as a dict (e.g. expose.default), not a bool.
+      # Callers must pass ports in values (see 1-infrastructure main.tf).
     ],
     var.set
   )

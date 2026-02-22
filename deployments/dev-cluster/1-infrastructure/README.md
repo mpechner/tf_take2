@@ -86,17 +86,28 @@ kubectl get svc -n traefik traefik
 kubectl get svc -n traefik traefik-internal
 ```
 
-## Destroy: Stuck Services and Orphan NLBs
+## Destroy: Delete Traefik NLBs First
 
-Terraform does **not** create the NLBs directly—the **AWS Load Balancer Controller** does when it sees the LoadBalancer Services. During `terraform destroy`, the controller (Helm release) is destroyed, so when Terraform deletes the Traefik Services, nothing is left to delete the NLBs or to remove the finalizers. The Services can sit in **Terminating** and the NLBs remain in AWS.
+Terraform does **not** create the NLBs directly—the **AWS Load Balancer Controller** does when it sees the LoadBalancer Services. During destroy, the controller is removed before the Traefik Services, so NLBs can be left behind and Services can hang in **Terminating**.
 
-**If destroy hangs on `kubernetes_service_v1.traefik_internal` or the Traefik Helm release:**  
-Clear the finalizer so the Service can be removed. Patch **both** services (the Helm release owns `traefik`; Terraform owns `traefik-internal`):
+**Before running `terraform destroy`**, delete the Traefik NLBs (from repo root or from this directory):
+
+```bash
+# From 1-infrastructure (use your terraform-execute role ARN)
+AWS_ASSUME_ROLE_ARN="arn:aws:iam::ACCOUNT_ID:role/terraform-execute" bash ../../../scripts/delete-traefik-nlbs.sh
+# Or: bash ../../../scripts/delete-traefik-nlbs.sh arn:aws:iam::ACCOUNT_ID:role/terraform-execute
+```
+
+Set `AWS_REGION` if not `us-west-2`. If your default credentials are not in the cluster account, you must set `AWS_ASSUME_ROLE_ARN` or pass the role ARN as the first argument so the script sees the same NLBs as Terraform.
+
+If you skip the script, **terraform destroy will detect existing Traefik NLBs and fail** with a copy-pastable command; run that command, then run `terraform destroy` again.
+
+**If destroy already hung or left orphan NLBs:** Run the script above. If Services are stuck in Terminating, clear finalizers and retry:
 ```bash
 kubectl patch svc -n traefik traefik-internal -p '{"metadata":{"finalizers":null}}' --type=merge
 kubectl patch svc -n traefik traefik -p '{"metadata":{"finalizers":null}}' --type=merge
 ```
-Then run `terraform destroy` again. The destroy-time cleanup (if still in state) deletes NLBs/target groups and retries finalizer removal; if those resources were already destroyed, delete any remaining NLBs in EC2 → Load balancers and target groups manually.
+Then run `terraform destroy` again.
 
 ## Troubleshooting: NLB target groups have no healthy targets
 

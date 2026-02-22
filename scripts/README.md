@@ -65,13 +65,21 @@ Retrieve and save the RKE SSH private key from AWS Secrets Manager.
 ---
 
 ### `delete-traefik-nlbs.sh`
-Remove orphaned Traefik NLBs and target groups (e.g. after `terraform destroy` on 1-infrastructure left them behind).
+Delete Traefik NLBs and their target groups. **Run before `terraform destroy`** in `deployments/dev-cluster/2-applications` or `deployments/dev-cluster/1-infrastructure` so destroy does not hang and leave orphans. If you skip it, destroy will detect NLBs and fail with a copy-pastable command.
 
 ```bash
+# From repo root (cluster account credentials or assume role)
 ./delete-traefik-nlbs.sh
 ```
 
-Uses `us-west-2` unless you set `AWS_REGION`. Requires AWS CLI and credentials for the account that owns the load balancers.
+If your default AWS credentials are not in the cluster account, use the terraform-execute role so the script sees the same NLBs as Terraform:
+
+```bash
+AWS_ASSUME_ROLE_ARN="arn:aws:iam::ACCOUNT_ID:role/terraform-execute" ./delete-traefik-nlbs.sh
+# Or: ./delete-traefik-nlbs.sh arn:aws:iam::ACCOUNT_ID:role/terraform-execute
+```
+
+Uses `us-west-2` unless you set `AWS_REGION`. Requires AWS CLI.
 
 ---
 

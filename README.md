@@ -232,3 +232,27 @@ You can monitor the deployment with k9s:
 ```bash
 k9s
 ```
+
+## Teardown / Destroy
+
+Destroy in **reverse order**: 2-applications first, then 1-infrastructure.
+
+**Before** running `terraform destroy` in either layer, delete the Traefik NLBs so destroy does not hang and leave orphans:
+
+```bash
+# From repo root (use cluster account role if your default credentials are not in that account)
+AWS_ASSUME_ROLE_ARN="arn:aws:iam::ACCOUNT_ID:role/terraform-execute" ./scripts/delete-traefik-nlbs.sh
+# Or: ./scripts/delete-traefik-nlbs.sh arn:aws:iam::ACCOUNT_ID:role/terraform-execute
+```
+
+Then destroy:
+
+```bash
+cd deployments/dev-cluster/2-applications
+terraform destroy
+
+cd ../1-infrastructure
+terraform destroy
+```
+
+If you skip the script, `terraform destroy` will detect existing Traefik NLBs and **fail with a copy-pastable command** to run the script, then you run destroy again. See `deployments/dev-cluster/1-infrastructure/README.md` and `scripts/README.md` for details.

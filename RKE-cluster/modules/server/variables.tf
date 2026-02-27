@@ -198,4 +198,50 @@ variable "rke2_kubectl_path" {
   description = "Full path to kubectl binary installed by RKE2"
   type        = string
   default     = "/var/lib/rancher/rke2/bin/kubectl"
+}
+
+# =============================================================================
+# IRSA (IAM Roles for Service Accounts) Variables
+# =============================================================================
+
+variable "irsa_enabled" {
+  description = "Enable IRSA (IAM Roles for Service Accounts) setup"
+  type        = bool
+  default     = false
+}
+
+variable "irsa_secret_name" {
+  description = "AWS Secrets Manager secret name containing the SA signing key"
+  type        = string
+  default     = ""
+}
+
+variable "irsa_bucket_name" {
+  description = "S3 bucket name containing OIDC discovery documents"
+  type        = string
+  default     = ""
+}
+
+variable "irsa_issuer_url" {
+  description = "OIDC issuer URL for service account tokens"
+  type        = string
+  default     = ""
+}
+
+variable "irsa_role_arn" {
+  description = "IAM role ARN for ECR access via IRSA"
+  type        = string
+  default     = ""
+}
+
+variable "irsa_service_account" {
+  description = "Name of the Kubernetes service account for IRSA"
+  type        = string
+  default     = "ecr-reader"
+}
+
+variable "irsa_namespace" {
+  description = "Kubernetes namespace for the IRSA service account"
+  type        = string
+  default     = "default"
 } 

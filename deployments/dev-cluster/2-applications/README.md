@@ -225,10 +225,9 @@ kubectl get jobs -n openvpn-certs
 kubectl logs -n openvpn-certs -l job-name=<job-name>
 
 # Common causes:
-#  - openvpn-publisher-aws-creds Secret missing (re-run terraform apply)
-#  - IAM policy not applied or wrong secret ARN
+#  - IAM policy not applied or wrong secret ARN (verify rke-nodes-role has Secrets Manager permissions)
 #  - openvpn_cert_publisher_image not set (CronJob won't be created)
-kubectl get secret openvpn-publisher-aws-creds -n openvpn-certs
+#  - ECR image does not exist (run `make -C scripts` to build and push)
 ```
 
 ### Ingress not working

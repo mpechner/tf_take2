@@ -195,6 +195,16 @@ ansible-playbook -i inventory.ini rke-agent-playbook.yml \
   --extra-vars "cluster_name=my-cluster region=us-west-2"
 ```
 
+## ECR Authentication
+
+This module does NOT include the `ecr-credential-provider` binary (see [RKE2 discussion #7691](https://github.com/rancher/rke2/discussions/7691)).
+
+For ECR authentication options, see the main [RKE-cluster README](../../README.md#ecr-authentication), which documents:
+
+1. **IAM Instance Profile** (Node-Level) - Already configured via `ecr-pull-policy.json`
+2. **IRSA** (Pod-Level) - Recommended for production with OIDC setup steps
+3. **Static Credentials** - Via `registries.yaml` (not recommended)
+
 ## Security
 
 The module implements several security measures:

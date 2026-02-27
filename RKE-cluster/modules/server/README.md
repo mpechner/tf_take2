@@ -168,6 +168,13 @@ RKE-cluster/modules/server/
 | audit_log_max_age | Maximum age of audit log files in days | `number` | `30` | no |
 | audit_log_max_backup | Maximum number of audit log backup files | `number` | `10` | no |
 | audit_log_max_size | Maximum size of audit log files in MB | `number` | `100` | no |
+| irsa_enabled | Enable IRSA (IAM Roles for Service Accounts) setup | `bool` | `false` | no |
+| irsa_secret_name | AWS Secrets Manager secret name for SA signing key | `string` | `""` | no |
+| irsa_bucket_name | S3 bucket name for OIDC discovery documents | `string` | `""` | no |
+| irsa_issuer_url | OIDC issuer URL for service account tokens | `string` | `""` | no |
+| irsa_role_arn | IAM role ARN for ECR access via IRSA | `string` | `""` | no |
+| irsa_service_account | Kubernetes service account name for IRSA | `string` | `"ecr-reader"` | no |
+| irsa_namespace | Kubernetes namespace for IRSA service account | `string` | `"default"` | no |
 
 ## Outputs
 
@@ -217,6 +224,51 @@ cd ansible
 ansible-playbook -i inventory.ini rke-server-playbook.yml \
   --extra-vars "cluster_name=my-cluster region=us-west-2"
 ```
+
+## ECR Authentication
+
+This module does NOT include the `ecr-credential-provider` binary (see [RKE2 discussion #7691](https://github.com/rancher/rke2/discussions/7691)).
+
+For ECR authentication options, see the main [RKE-cluster README](../../README.md#ecr-authentication), which documents:
+
+1. **IAM Instance Profile** (Node-Level) - Already configured via `ecr-pull-policy.json`
+2. **IRSA** (Pod-Level) - Recommended for production with OIDC setup steps
+3. **Static Credentials** - Via `registries.yaml` (not recommended)
+
+### IRSA Automation
+
+To enable automatic IRSA setup via Ansible, pass the IRSA variables from the `irsa` module:
+
+```hcl
+module "irsa" {
+  source = "../../modules/irsa"
+  cluster_name = "dev"
+  # ... other IRSA variables
+}
+
+module "rke_servers" {
+  source = "./modules/server"
+  
+  # ... standard server variables
+  
+  # Enable IRSA automation
+  irsa_enabled         = true
+  irsa_secret_name   = module.irsa.sa_signer_key_secret_name
+  irsa_bucket_name   = module.irsa.s3_bucket_name
+  irsa_issuer_url    = module.irsa.oidc_issuer_url
+  irsa_role_arn      = module.irsa.ecr_iam_role_arn
+  irsa_service_account = "ecr-reader"
+  irsa_namespace     = "default"
+}
+```
+
+When enabled, the Ansible playbook will automatically:
+1. Download the SA signing key from Secrets Manager
+2. Download the public key from S3
+3. Update RKE2 config with IRSA kubelet arguments
+4. Restart RKE2 to apply changes
+5. Install AWS Pod Identity Webhook (on first server)
+6. Create the IRSA service account with annotation (on first server)
 
 ## Security
 

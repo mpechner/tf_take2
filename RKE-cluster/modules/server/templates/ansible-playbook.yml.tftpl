@@ -210,6 +210,140 @@
       become: true
       become_user: "{{ ansible_user }}"
 
+    # =============================================================================
+    # IRSA (IAM Roles for Service Accounts) Setup - Optional
+    # Set irsa_enabled: true and provide irsa_secret_name to enable
+    # =============================================================================
+
+    - name: Check if IRSA is enabled
+      set_fact:
+        irsa_is_enabled: "{{ irsa_enabled | default(false) | bool }}"
+
+    - name: Download IRSA signing key from Secrets Manager (if enabled)
+      shell: |
+        python3 - <<'PY'
+        import boto3
+        import sys
+        client = boto3.client('secretsmanager', region_name='{{ region }}')
+        secret = client.get_secret_value(SecretId='{{ irsa_secret_name | default("") }}')
+        print(secret['SecretString'])
+        PY
+      args:
+        creates: /etc/rancher/rke2/sa-signer.key
+      register: sa_key_download
+      when: irsa_is_enabled | bool
+      ignore_errors: yes
+
+    - name: Write IRSA signing key to file (if downloaded)
+      copy:
+        content: "{{ sa_key_download.stdout }}"
+        dest: /etc/rancher/rke2/sa-signer.key
+        mode: '0600'
+        owner: root
+        group: root
+      when:
+        - irsa_is_enabled | bool
+        - sa_key_download is succeeded
+        - sa_key_download.stdout is defined
+
+    - name: Download IRSA public key from S3 (if enabled)
+      shell: |
+        aws s3 cp s3://{{ irsa_bucket_name | default("") }}/sa-signer.pub /etc/rancher/rke2/sa-signer.pub
+      args:
+        creates: /etc/rancher/rke2/sa-signer.pub
+      when: irsa_is_enabled | bool
+      ignore_errors: yes
+
+    - name: Set permissions on IRSA public key
+      file:
+        path: /etc/rancher/rke2/sa-signer.pub
+        mode: '0644'
+        owner: root
+        group: root
+      when: irsa_is_enabled | bool
+
+    - name: Check current RKE2 config for IRSA settings
+      shell: grep -q "service-account-issuer" /etc/rancher/rke2/config.yaml 2>/dev/null && echo "found" || echo "not_found"
+      register: irsa_config_check
+      changed_when: false
+      when: irsa_is_enabled | bool
+
+    - name: Backup current RKE2 config before modifying
+      copy:
+        src: /etc/rancher/rke2/config.yaml
+        dest: /etc/rancher/rke2/config.yaml.backup.{{ ansible_date_time.epoch }}
+        remote_src: yes
+      when:
+        - irsa_is_enabled | bool
+        - irsa_config_check.stdout == "not_found"
+
+    - name: Add IRSA kubelet args to RKE2 config
+      blockinfile:
+        path: /etc/rancher/rke2/config.yaml
+        marker: "# {mark} IRSA CONFIGURATION"
+        block: |
+          kubelet-arg:
+            - "service-account-issuer={{ irsa_issuer_url | default('') }}"
+            - "service-account-signing-key-file=/etc/rancher/rke2/sa-signer.key"
+            - "service-account-key-file=/etc/rancher/rke2/sa-signer.pub"
+            - "api-audiences=sts.amazonaws.com"
+        insertafter: EOF
+      when:
+        - irsa_is_enabled | bool
+        - irsa_config_check.stdout == "not_found"
+      notify: restart rke2-server
+
+    - name: Restart RKE2 to apply IRSA configuration
+      systemd:
+        name: rke2-server
+        state: restarted
+        daemon_reload: yes
+      when:
+        - irsa_is_enabled | bool
+        - irsa_config_check.stdout == "not_found"
+
+    - name: Wait for RKE2 to restart after IRSA config
+      wait_for:
+        path: /etc/rancher/rke2/rke2.yaml
+        state: present
+        delay: 10
+        timeout: 300
+      when:
+        - irsa_is_enabled | bool
+        - irsa_config_check.stdout == "not_found"
+
+    - name: Install AWS Pod Identity Webhook (first server only, if enabled)
+      shell: |
+        # Check if webhook is already installed
+        if ! /var/lib/rancher/rke2/bin/kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml get deployment pod-identity-webhook -n kube-system &>/dev/null; then
+          echo "Installing AWS Pod Identity Webhook..."
+          /var/lib/rancher/rke2/bin/kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml apply -k "github.com/aws/amazon-eks-pod-identity-webhook/deploy?ref=master" 2>&1 || true
+          # Wait for webhook to be ready
+          sleep 30
+          /var/lib/rancher/rke2/bin/kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml wait --for=condition=available deployment/pod-identity-webhook -n kube-system --timeout=120s || true
+        else
+          echo "AWS Pod Identity Webhook already installed"
+        fi
+      when:
+        - irsa_is_enabled | bool
+        - ansible_default_ipv4.address == '${server_instance_ips[0]}'
+      ignore_errors: yes
+
+    - name: Create ECR service account with IRSA annotation (first server only, if enabled)
+      shell: |
+        # Check if service account exists
+        if ! /var/lib/rancher/rke2/bin/kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml get serviceaccount {{ irsa_service_account | default('ecr-reader') }} -n {{ irsa_namespace | default('default') }} &>/dev/null; then
+          echo "Creating IRSA service account..."
+          /var/lib/rancher/rke2/bin/kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml create serviceaccount {{ irsa_service_account | default('ecr-reader') }} -n {{ irsa_namespace | default('default') }} 2>&1
+          /var/lib/rancher/rke2/bin/kubectl --kubeconfig=/etc/rancher/rke2/rke2.yaml annotate serviceaccount {{ irsa_service_account | default('ecr-reader') }} -n {{ irsa_namespace | default('default') }} eks.amazonaws.com/role-arn={{ irsa_role_arn | default('') }} 2>&1
+        else
+          echo "IRSA service account already exists"
+        fi
+      when:
+        - irsa_is_enabled | bool
+        - ansible_default_ipv4.address == '${server_instance_ips[0]}'
+      ignore_errors: yes
+
     - name: End play (skip legacy RKE tasks)
       meta: end_play
 
@@ -221,4 +355,10 @@
 
     - name: reload systemd
       systemd:
+        daemon_reload: yes
+
+    - name: restart rke2-server
+      systemd:
+        name: rke2-server
+        state: restarted
         daemon_reload: yes 

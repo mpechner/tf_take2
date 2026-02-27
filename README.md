@@ -159,6 +159,8 @@ See `openvpn/README.md` for more detail and notes on `vpn.server.config_text`.
 
 Create the ECR repository (e.g. `vpncertrotate`) used for the OpenVPN cert rotation Lambda image and other container images. Configure `ecr/dev/variables.tf` or `terraform.tfvars` (copy from `terraform.tfvars.example`) with your `account_id`, `org_id`, and `repository_names`.
 
+**Note on ECR Authentication:** This setup uses IAM instance profiles for node-level ECR access (see `RKE-cluster/modules/ec2/policies/ecr-pull-policy.json`). For pod-level ECR access control, see the optional [IRSA module](modules/irsa/README.md) (IAM Roles for Service Accounts).
+
 ```bash
 cd ecr/dev
 terraform init
@@ -258,9 +260,25 @@ This deploys:
 
 Wait for all infrastructure components to be ready (2-3 minutes).
 
-## Step 10: Deploy Applications
+## Step 10: Build OpenVPN Cert Publisher Docker Image (REQUIRED if using OpenVPN certs)
 
-Now deploy applications (Rancher, Nginx sample, Traefik Dashboard).
+If you plan to use the **OpenVPN TLS Certificate Pipeline** (deployed in Step 11), you MUST build and push the publisher Docker image FIRST.
+
+The CronJob uses a custom Docker image (`openvpn-dev:latest`) that publishes certificates to AWS Secrets Manager. **Without this image, the OpenVPN cert deployment will fail.**
+
+**Build and push the image:**
+```bash
+cd deployments/dev-cluster/2-applications
+make -C scripts  # Builds and pushes to ECR: 364082771643.dkr.ecr.us-west-2.amazonaws.com/openvpn-dev:latest
+```
+
+See `deployments/dev-cluster/2-applications/README.md` § "Deploying the OpenVPN TLS cert pipeline" for full details.
+
+---
+
+## Step 11: Deploy Applications
+
+Now deploy applications (Rancher, Nginx sample, Traefik Dashboard, and optionally OpenVPN cert pipeline).
 
 ```bash
 cd ../2-applications
@@ -272,8 +290,9 @@ This deploys:
 - **Rancher** at `https://rancher.dev.foobar.support` (Kubernetes management UI). **Initial login:** username `admin`, password `admin` (change on first use).
 - **Sample nginx site** at `https://nginx.dev.foobar.support`
 - **Traefik dashboard** at `https://traefik.dev.foobar.support/dashboard`
+- **OpenVPN TLS Certificate Pipeline** (optional) - Automated Let's Encrypt certificate for VPN + CronJob (requires Step 10 above)
 
-**Note:** All three are on the same public NLB; no VPN required once DNS has synced. See `deployments/dev-cluster/ADDING-NEW-APP.md` to add more apps.
+**Note:** All three web apps are on the same public NLB; no VPN required once DNS has synced. See `deployments/dev-cluster/ADDING-NEW-APP.md` to add more apps.
 
 You can monitor the deployment with k9s:
 ```bash
@@ -303,3 +322,21 @@ terraform destroy
 ```
 
 If you skip the script, `terraform destroy` will detect existing Traefik NLBs and **fail with a copy-pastable command** to run the script, then you run destroy again. See `deployments/dev-cluster/1-infrastructure/README.md` and `scripts/README.md` for details.
+
+## Optional: IRSA (IAM Roles for Service Accounts)
+
+For fine-grained pod-level IAM access (e.g., specific pods accessing specific ECR repositories), you can set up IRSA using the `modules/irsa` module:
+
+```bash
+cd modules/irsa
+terraform init
+terraform apply
+```
+
+See [modules/irsa/README.md](modules/irsa/README.md) for full setup instructions and RKE2 integration.
+
+## Recent Changes
+
+- **RKE2 Templates Fixed**: Removed `ecr-credential-provider` binary download (not available) and fixed template escaping
+- **IRSA Module Added**: New `modules/irsa/` for IAM Roles for Service Accounts automation
+- **OpenVPN TLS Certificate Pipeline**: Added `openvpn-cert.tf` with automated Let's Encrypt certificate issuance and CronJob to publish to AWS Secrets Manager. **⚠️ REQUIRES: Build and push `openvpn-dev:latest` Docker image to ECR BEFORE deploying (see Step 10).**

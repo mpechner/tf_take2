@@ -22,7 +22,7 @@ locals {
   backend_tls_secret = "${local.app_name}-backend-tls"
 }
 
-resource "kubernetes_namespace" "this" {
+resource "kubernetes_namespace_v1" "this" {
   count = var.create_namespace ? 1 : 0
 
   metadata {
@@ -32,10 +32,10 @@ resource "kubernetes_namespace" "this" {
 }
 
 locals {
-  namespace = var.create_namespace ? kubernetes_namespace.this[0].metadata[0].name : var.namespace
+  namespace = var.create_namespace ? kubernetes_namespace_v1.this[0].metadata[0].name : var.namespace
 }
 
-resource "kubernetes_config_map" "html" {
+resource "kubernetes_config_map_v1" "html" {
   metadata {
     name      = "${local.app_name}-html"
     namespace = local.namespace
@@ -54,7 +54,7 @@ resource "kubernetes_config_map" "html" {
 }
 
 # Nginx configuration for HTTPS
-resource "kubernetes_config_map" "nginx_config" {
+resource "kubernetes_config_map_v1" "nginx_config" {
   metadata {
     name      = "${local.app_name}-config"
     namespace = local.namespace
@@ -66,7 +66,7 @@ resource "kubernetes_config_map" "nginx_config" {
   }
 }
 
-resource "kubernetes_deployment" "this" {
+resource "kubernetes_deployment_v1" "this" {
   metadata {
     name      = local.app_name
     namespace = local.namespace
@@ -142,14 +142,14 @@ resource "kubernetes_deployment" "this" {
         volume {
           name = "html"
           config_map {
-            name = kubernetes_config_map.html.metadata[0].name
+            name = kubernetes_config_map_v1.html.metadata[0].name
           }
         }
 
         volume {
           name = "nginx-config"
           config_map {
-            name = kubernetes_config_map.nginx_config.metadata[0].name
+            name = kubernetes_config_map_v1.nginx_config.metadata[0].name
           }
         }
       }
@@ -157,7 +157,7 @@ resource "kubernetes_deployment" "this" {
   }
 }
 
-resource "kubernetes_service" "this" {
+resource "kubernetes_service_v1" "this" {
   metadata {
     name      = local.app_name
     namespace = local.namespace

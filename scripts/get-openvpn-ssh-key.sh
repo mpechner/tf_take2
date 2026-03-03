@@ -2,8 +2,18 @@
 # Get OpenVPN SSH private key from AWS Secrets Manager
 # Usage: ./scripts/get-openvpn-ssh-key.sh [secret-name]
 # If no secret name provided, defaults to: openvpn-ssh
+#
+# Requires: AWS_ACCOUNT_ID env var (or set TF_VAR_account_id)
+#   export AWS_ACCOUNT_ID=<your-account-id>
 
 set -e
+
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-${TF_VAR_account_id:-}}"
+if [ -z "$AWS_ACCOUNT_ID" ]; then
+  echo "ERROR: AWS_ACCOUNT_ID environment variable is not set."
+  echo "  export AWS_ACCOUNT_ID=<your-account-id>"
+  exit 1
+fi
 
 # Default to OpenVPN SSH key secret (created by openvpn/terraform)
 SECRET_NAME="${1:-openvpn-ssh}"
@@ -15,7 +25,7 @@ echo "Secret: $SECRET_NAME"
 # Assume the terraform-execute role to access dev account
 echo "Assuming terraform-execute role..."
 TEMP_CREDS=$(aws sts assume-role \
-  --role-arn "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute" \
+  --role-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:role/terraform-execute" \
   --role-session-name "get-openvpn-ssh-key" \
   --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
   --output text)

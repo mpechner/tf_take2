@@ -1,4 +1,4 @@
-ECR_ACCOUNT   := REDACTED_ACCOUNT_ID
+ECR_ACCOUNT   ?= $(shell aws sts get-caller-identity --query Account --output text)
 ECR_REGION    := us-west-2
 ECR_REPO      := openvpn-dev
 IMAGE_TAG     := latest

@@ -44,6 +44,33 @@ Suitable as a reference for multi-account AWS, Kubernetes operations, and ingres
 
 In each file, set `bucket`, `region`, and `dynamodb_table` inside the `backend "s3" { }` block to your state bucket and DynamoDB lock table (and update any variable defaults that reference the bucket).
 
+## Required: terraform.tfvars files
+
+Account-specific values (AWS account ID, IAM role ARNs, hosted zone IDs, email, domain) are **not hardcoded** in the source. Each component requires a `terraform.tfvars` file. These files are gitignored (`*.tfvars`) and must be created locally.
+
+Each directory has a `terraform.tfvars.example` as a starting point where available. The table below lists every required tfvars file and the values you must set:
+
+| Component | File | Required values |
+|-----------|------|----------------|
+| `buckets/dev-account` | `terraform.tfvars` | `account_id`, `aws_assume_role_arn` |
+| `deployments/dev-cluster/1-infrastructure` | `terraform.tfvars` | `account_id`, `aws_assume_role_arn`, `route53_zone_id`, `route53_domain`, `letsencrypt_email`, `letsencrypt_environment`, `cluster_name` |
+| `deployments/dev-cluster/2-applications` | `terraform.tfvars` | `account_id`, `aws_assume_role_arn`, `route53_domain`, `letsencrypt_environment`, `openvpn_cert_enabled`, `openvpn_cert_hosted_zone_id`, `openvpn_cert_letsencrypt_email`, `openvpn_cert_publisher_image` |
+| `ecr/dev` | `terraform.tfvars` | `account_id`, `repository_names` |
+| `openvpn/devvpn` | `terraform.tfvars` | `account_id` |
+| `RKE-cluster/dev-cluster/ec2` | `terraform.tfvars` | `aws_account_id`, `route53_hosted_zone_ids` |
+| `RKE-cluster/dev-cluster/RKE` | `terraform.tfvars` | `aws_account_id` |
+| `route53/delegate` | `terraform.tfvars` | `aws_account_id`, `network_account_id` |
+| `route53/dns-security` | `terraform.tfvars` | `aws_account_id`, `network_account_id` |
+| `vpc/dev` | `terraform.tfvars` | `account_id` |
+
+**Shell scripts** (`scripts/`) require `AWS_ACCOUNT_ID` set in the environment:
+```bash
+export AWS_ACCOUNT_ID=<your-account-id>
+```
+Or inline: `AWS_ACCOUNT_ID=<your-account-id> ./scripts/get-openvpn-ssh-key.sh`
+
+After `terraform apply` on `openvpn/devvpn` and `RKE-cluster/dev-cluster/ec2`, the outputs include the exact commands with the account ID already substituted — copy and paste directly.
+
 # Bootstrap
 
 ## Step 1: Organization Setup
@@ -104,13 +131,9 @@ vpn_connection_info = {
 - This subnet is added to the RKE security groups to allow kubectl/k9s access from VPN-connected clients
 - If you change the VPN IP Network in the OpenVPN admin panel, you must also update the `cluster_cidr_blocks` in `RKE-cluster/dev-cluster/RKE/main.tf`
 
-Get the OpenVPN SSH key (saved to ~/.ssh/openvpn-ssh-keypair.pem). From repo root, or from `openvpn/devvpn` use `../../scripts/`:
+Get the OpenVPN SSH key (saved to ~/.ssh/openvpn-ssh-keypair.pem). The `terraform apply` output includes the exact command — copy it directly from the `get_ssh_key_command` output. Or run manually:
 ```bash
-# From repo root:
-./scripts/get-openvpn-ssh-key.sh
-# From openvpn/devvpn:
-../../scripts/get-openvpn-ssh-key.sh
-# Or with a different secret name: .../get-openvpn-ssh-key.sh <secret-name>
+AWS_ACCOUNT_ID=<your-account-id> ./scripts/get-openvpn-ssh-key.sh
 ```
 
 **Important: First, update the OS and reboot (before setting password):**
@@ -194,18 +217,9 @@ terraform apply
 
 **IMPORTANT - SSH Key Setup Required:**
 
-Before proceeding to Step 7, you MUST copy the RKE SSH private key:
-
+Before proceeding to Step 7, you MUST copy the RKE SSH private key. The `terraform apply` output includes the exact command — copy it directly from the `next_steps` output. Or run manually:
 ```bash
-# From repo root (quick method - default secret name rke-ssh from RKE-cluster/dev-cluster/ec2):
-./scripts/get-rke-ssh-key.sh
-
-# From RKE-cluster/dev-cluster/ec2 (after terraform apply):
-../../../scripts/get-rke-ssh-key.sh
-
-# Or specify a different secret name:
-# ./scripts/get-rke-ssh-key.sh <secret-name-from-output>
-# ../../../scripts/get-rke-ssh-key.sh <secret-name-from-output>
+AWS_ACCOUNT_ID=<your-account-id> ./scripts/get-rke-ssh-key.sh
 ```
 
 **Without this SSH key, Step 7 will fail with authentication errors!**
@@ -285,7 +299,7 @@ The CronJob uses a custom Docker image (`openvpn-dev:latest`) that publishes cer
 **Build and push the image:**
 ```bash
 cd deployments/dev-cluster/2-applications
-make -C scripts  # Builds and pushes to ECR: REDACTED_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/openvpn-dev:latest
+AWS_ACCOUNT_ID=<your-account-id> make -C scripts
 ```
 
 See `deployments/dev-cluster/2-applications/README.md` § "Deploying the OpenVPN TLS cert pipeline" for full details.

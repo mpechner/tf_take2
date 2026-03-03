@@ -32,6 +32,7 @@ resource "local_file" "ansible_playbook" {
   content = templatefile("${path.module}/templates/ansible-playbook.yml.tftpl", {
     cluster_name                 = var.cluster_name
     aws_region                   = var.aws_region
+    aws_account_id               = data.aws_caller_identity.current.account_id
     ansible_user                 = var.ansible_user
     ansible_ssh_private_key_file = var.ansible_ssh_private_key_file
     docker_version               = var.docker_version

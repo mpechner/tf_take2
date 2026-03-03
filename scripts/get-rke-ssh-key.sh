@@ -3,8 +3,18 @@
 # Usage: ./scripts/get-rke-ssh-key.sh [secret-name]
 # If no secret name provided, defaults to: rke-ssh
 # Saves key to ~/.ssh/rke-key (used by RKE terraform and kubectl/ssh to nodes)
+#
+# Requires: AWS_ACCOUNT_ID env var (or set TF_VAR_account_id)
+#   export AWS_ACCOUNT_ID=<your-account-id>
 
 set -e
+
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-${TF_VAR_account_id:-}}"
+if [ -z "$AWS_ACCOUNT_ID" ]; then
+  echo "ERROR: AWS_ACCOUNT_ID environment variable is not set."
+  echo "  export AWS_ACCOUNT_ID=<your-account-id>"
+  exit 1
+fi
 
 SECRET_NAME="${1:-rke-ssh}"
 SSH_KEY_PATH="$HOME/.ssh/rke-key"
@@ -15,7 +25,7 @@ echo "Secret: $SECRET_NAME"
 # Assume the terraform-execute role to access dev account (same as RKE-cluster/dev-cluster/ec2)
 echo "Assuming terraform-execute role..."
 TEMP_CREDS=$(aws sts assume-role \
-  --role-arn "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute" \
+  --role-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:role/terraform-execute" \
   --role-session-name "get-rke-ssh-key" \
   --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
   --output text)

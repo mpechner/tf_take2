@@ -54,3 +54,8 @@ output "tls_sync_info" {
   description = "Information about the TLS sync setup"
   value       = module.openvpn.tls_sync_info
 }
+
+output "get_ssh_key_command" {
+  description = "Command to fetch the OpenVPN SSH key from Secrets Manager"
+  value       = "AWS_ACCOUNT_ID=${var.account_id} ${path.root}/../../scripts/get-openvpn-ssh-key.sh"
+}

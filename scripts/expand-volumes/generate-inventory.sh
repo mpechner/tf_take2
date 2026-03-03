@@ -1,7 +1,17 @@
 #!/bin/bash
 # Generate Ansible inventory from running RKE instances
+#
+# Requires: AWS_ACCOUNT_ID env var
+#   export AWS_ACCOUNT_ID=<your-account-id>
 
 set -e
+
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-${TF_VAR_account_id:-}}"
+if [ -z "$AWS_ACCOUNT_ID" ]; then
+  echo "ERROR: AWS_ACCOUNT_ID environment variable is not set."
+  echo "  export AWS_ACCOUNT_ID=<your-account-id>"
+  exit 1
+fi
 
 REGION="${1:-us-west-2}"
 OUTPUT="${2:-inventory.ini}"
@@ -10,7 +20,7 @@ echo "Generating Ansible inventory for RKE nodes..."
 
 # Assume terraform-execute role
 TEMP_CREDS=$(aws sts assume-role \
-  --role-arn "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute" \
+  --role-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:role/terraform-execute" \
   --role-session-name "ansible-inventory" \
   --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
   --output text)

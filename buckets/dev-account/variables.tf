@@ -1,6 +1,6 @@
 variable "account_id" {
-  type    = string
-  default = "REDACTED_ACCOUNT_ID"
+  type        = string
+  description = "AWS account ID"
 }
 
 variable "aws_region" {
@@ -14,6 +14,6 @@ variable "environment" {
 }
 
 variable "aws_assume_role_arn" {
-  type    = string
-  default = "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute"
+  type        = string
+  description = "IAM role ARN for Terraform to assume"
 }

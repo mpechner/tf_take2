@@ -273,7 +273,7 @@ resource "null_resource" "wait_for_servers" {
       
       # Assume the terraform-execute role
       TEMP_CREDS=$(aws sts assume-role \
-        --role-arn "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute" \
+        --role-arn "${local.terraform_role_arn}" \
         --role-session-name "tf-ec2-health-check-server" \
         --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
         --output text)
@@ -284,7 +284,7 @@ resource "null_resource" "wait_for_servers" {
       
       for i in $(seq 1 60); do
         STATUS=$(aws ec2 describe-instance-status \
-          --region us-west-2 \
+          --region ${local.aws_region} \
           --instance-ids ${each.value.id} \
           --include-all-instances \
           --query 'InstanceStatuses[0].[InstanceStatus.Status,SystemStatus.Status]' \
@@ -324,7 +324,7 @@ resource "null_resource" "wait_for_agents" {
       
       # Assume the terraform-execute role
       TEMP_CREDS=$(aws sts assume-role \
-        --role-arn "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute" \
+        --role-arn "${local.terraform_role_arn}" \
         --role-session-name "tf-ec2-health-check-agent" \
         --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
         --output text)
@@ -335,7 +335,7 @@ resource "null_resource" "wait_for_agents" {
       
       for i in $(seq 1 60); do
         STATUS=$(aws ec2 describe-instance-status \
-          --region us-west-2 \
+          --region ${local.aws_region} \
           --instance-ids ${each.value.id} \
           --include-all-instances \
           --query 'InstanceStatuses[0].[InstanceStatus.Status,SystemStatus.Status]' \

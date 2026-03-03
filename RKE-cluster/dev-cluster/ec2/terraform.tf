@@ -24,15 +24,15 @@ terraform {
   }
 }
 
-locals {
-  dev_account = "REDACTED_ACCOUNT_ID"
+variable "aws_account_id" {
+  type        = string
+  description = "AWS account ID to deploy into"
 }
 
 provider "aws" {
-  #alias  = "dev"
   region = "us-west-2"
   assume_role {
-    role_arn = "arn:aws:iam::${local.dev_account}:role/terraform-execute"
+    role_arn = "arn:aws:iam::${var.aws_account_id}:role/terraform-execute"
   }
 }
 

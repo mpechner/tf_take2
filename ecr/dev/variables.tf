@@ -2,7 +2,7 @@
 
 variable "account_id" {
   description = "AWS account ID (dev account; used for assume role and as dev_account_id for write access)"
-  default = "REDACTED_ACCOUNT_ID"
+  type        = string
 }
 
 variable "org_id" {

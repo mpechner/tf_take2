@@ -15,7 +15,6 @@ variable "ami_id" {
 variable "account_id" {
   description = "AWS account ID to assume for deploying OpenVPN"
   type        = string
-  default     = "REDACTED_ACCOUNT_ID"
 }
 
 variable "subnet_id" {

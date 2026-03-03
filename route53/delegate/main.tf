@@ -16,16 +16,21 @@ terraform {
   }
 }
 
-locals {
-    dev_account     = "REDACTED_ACCOUNT_ID"
-    network_account = "061154959995"
+variable "aws_account_id" {
+  type        = string
+  description = "AWS account ID to deploy into"
+}
+
+variable "network_account_id" {
+  type        = string
+  description = "AWS account ID for the network/Route53 parent zone account"
 }
 
 provider "aws" {
   alias  = "network"
   region = "us-west-2"
   assume_role {
-    role_arn = "arn:aws:iam::${local.network_account}:role/terraform-execute"
+    role_arn = "arn:aws:iam::${var.network_account_id}:role/terraform-execute"
   }
 }
 
@@ -33,7 +38,7 @@ provider "aws" {
   alias  = "dev"
   region = "us-west-2"
   assume_role {
-    role_arn = "arn:aws:iam::${local.dev_account}:role/terraform-execute"
+    role_arn = "arn:aws:iam::${var.aws_account_id}:role/terraform-execute"
   }
 }
 

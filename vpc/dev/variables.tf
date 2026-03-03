@@ -1,5 +1,6 @@
 variable account_id {
-    default = "REDACTED_ACCOUNT_ID"
+    description = "AWS account ID"
+    type        = string
 }
 
 variable region {

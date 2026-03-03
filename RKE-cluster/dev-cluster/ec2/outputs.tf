@@ -30,7 +30,7 @@ output "next_steps" {
     
     Next steps:
     1. Get the RKE SSH key (saved to ~/.ssh/rke-key):
-       ../../../scripts/get-rke-ssh-key.sh
+       AWS_ACCOUNT_ID=${var.aws_account_id} ../../../scripts/get-rke-ssh-key.sh
     
     2. Make sure you're connected to the VPN
     

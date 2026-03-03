@@ -3,6 +3,16 @@ set -e
 
 # Script to verify root volume sizes on RKE nodes
 # Shows both AWS EBS volume size and actual filesystem usage on each node
+#
+# Requires: AWS_ACCOUNT_ID env var
+#   export AWS_ACCOUNT_ID=<your-account-id>
+
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-${TF_VAR_account_id:-}}"
+if [ -z "$AWS_ACCOUNT_ID" ]; then
+  echo "ERROR: AWS_ACCOUNT_ID environment variable is not set."
+  echo "  export AWS_ACCOUNT_ID=<your-account-id>"
+  exit 1
+fi
 
 CLUSTER_NAME="${1:-dev}"
 SSH_KEY="${2:-~/.ssh/rke-key}"
@@ -14,7 +24,7 @@ echo "=========================================="
 # Assume terraform-execute role
 echo "Assuming AWS role..."
 TEMP_CREDS=$(aws sts assume-role \
-  --role-arn "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute" \
+  --role-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:role/terraform-execute" \
   --role-session-name "verify-volumes" \
   --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
   --output text)

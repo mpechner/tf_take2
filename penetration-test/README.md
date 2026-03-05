@@ -25,17 +25,47 @@ export TARGET_IP="<NLB_IP_FROM_DIG>"  # Optional for network-level tests
 
 ## Quick Start
 
+### Single Site Testing
+
 ```bash
-# Run all tests
+# Run all tests against default site (nginx.dev.foobar.support)
 ./run-all-tests.sh
 
-# Run specific test category
+# Run specific test category against a specific site
+export TARGET_URL="https://nginx.dev.foobar.support"
 ./tests/test-headers.sh
 ./tests/test-tls.sh
 ./tests/test-info-disclosure.sh
+```
 
-# Generate report
-./generate-report.sh > reports/nginx-security-report-$(date +%Y%m%d).md
+### Multi-Site Testing
+
+```bash
+# Create a sites file (one URL per line)
+cat > tests/sites.txt << 'EOF'
+# Public site
+https://nginx.dev.foobar.support
+
+# Internal sites (require VPN)
+https://traefik.dev.foobar.support
+https://rancher.dev.foobar.support
+EOF
+
+# Run tests against all sites
+./run-all-tests.sh tests/sites.txt
+
+# Or use default sites file (tests/sites.txt)
+./run-all-tests.sh
+```
+
+**Output Structure:**
+```
+penetration-run/20260305-121457/
+├── MASTER-SUMMARY-20260305-121457.txt    # Overall summary
+├── security-assessment-nginx_dev_foobar_support-20260305-121457.txt
+├── security-assessment-traefik_dev_foobar_support-20260305-121457.txt
+├── security-assessment-rancher_dev_foobar_support-20260305-121457.txt
+└── test-nginx_dev_foobar_support.log
 ```
 
 ## Test Categories

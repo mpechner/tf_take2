@@ -1,0 +1,10 @@
+# FooBar Penetration Testing - Sites to Test
+# One URL per line, comments start with #
+# Empty lines are ignored
+
+# External/Public facing site
+https://nginx.dev.foobar.support
+
+# Internal sites (require VPN)
+https://traefik.dev.foobar.support
+https://rancher.dev.foobar.support

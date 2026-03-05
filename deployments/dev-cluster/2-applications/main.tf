@@ -87,6 +87,12 @@ resource "kubernetes_manifest" "traefik_dashboard_ingressroute" {
           match    = "Host(`traefik.${var.route53_domain}`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`) || PathPrefix(`/`))"
           kind     = "Rule"
           priority = 100
+          middlewares = [
+            {
+              name      = "security-headers"
+              namespace = "traefik"
+            }
+          ]
           services = [
             {
               name = "api@internal"
@@ -333,6 +339,12 @@ resource "kubernetes_manifest" "rancher_ingressroute" {
           match    = "Host(`rancher.${var.route53_domain}`) && PathPrefix(`/`)"
           kind     = "Rule"
           priority = 100
+          middlewares = [
+            {
+              name      = "security-headers"
+              namespace = "traefik"
+            }
+          ]
           services = [
             {
               name           = "rancher"

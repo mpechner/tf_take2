@@ -69,6 +69,9 @@ module "vpc" {
   create_flow_log_cloudwatch_log_group  = true
   create_flow_log_cloudwatch_iam_role   = true
   flow_log_max_aggregation_interval     = 60
+  # Static log group name so the metric filters below can reference it before vpc_id is known.
+  flow_log_cloudwatch_log_group_name_prefix = "/aws/vpc-flow-log/"
+  flow_log_cloudwatch_log_group_name_suffix = var.name
 
   tags = local.tags
 }
@@ -240,3 +243,138 @@ resource "aws_vpc_endpoint" "gateway" {
 #
 #  tags = local.tags
 #}
+
+################################################################################
+# VPC Flow Log Alerting
+# All resources here are destroyed with the VPC (same module, no separate state).
+################################################################################
+
+locals {
+  # Static log group name — matches the prefix+suffix set on module.vpc above.
+  # Using a name-only pattern (not vpc_id) avoids a dependency cycle where the
+  # metric filters need the log group to exist before the VPC is fully created.
+  flow_log_group = var.flow_log_group_name != "" ? var.flow_log_group_name : "/aws/vpc-flow-log/${var.name}"
+}
+
+# SNS topic — receives all flow log alarms.
+# Destroyed with the VPC module since it is defined here.
+resource "aws_sns_topic" "flow_log_alerts" {
+  name = "${var.name}-flow-log-alerts"
+  tags = local.tags
+}
+
+resource "aws_sns_topic_subscription" "flow_log_alerts_email" {
+  count     = var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.flow_log_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# ── Metric filter 1: SSH from unexpected CIDRs ────────────────────────────────
+# Matches ACCEPT or REJECT traffic to port 22 from any source.
+# The alarm fires when any SSH traffic appears — since RKE nodes are in private
+# subnets and the OpenVPN server restricts port 22 to a known admin IP, any
+# unexpected SSH hit is worth investigating.
+resource "aws_cloudwatch_log_metric_filter" "ssh_traffic" {
+  name           = "${var.name}-ssh-traffic"
+  log_group_name = local.flow_log_group
+  pattern        = "[version, account_id, interface_id, srcaddr, dstaddr, srcport, dstport=\"22\", protocol=\"6\", packets, bytes, start, end, action, log_status]"
+
+  metric_transformation {
+    name      = "${var.name}-SSHTrafficCount"
+    namespace = "VPCFlowLogs/${var.name}"
+    value     = "1"
+    unit      = "Count"
+  }
+
+  depends_on = [module.vpc]
+}
+
+resource "aws_cloudwatch_metric_alarm" "ssh_traffic" {
+  alarm_name          = "${var.name}-ssh-traffic"
+  alarm_description   = "SSH traffic (port 22) detected in VPC ${var.name}. Verify source is the expected admin IP."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "${var.name}-SSHTrafficCount"
+  namespace           = "VPCFlowLogs/${var.name}"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.flow_log_alerts.arn]
+  ok_actions    = [aws_sns_topic.flow_log_alerts.arn]
+
+  tags = local.tags
+}
+
+# ── Metric filter 2: Rejected traffic ────────────────────────────────────────
+# Fires when security group or NACL rejections spike — potential port scan
+# or misconfigured security group.
+resource "aws_cloudwatch_log_metric_filter" "rejected_traffic" {
+  name           = "${var.name}-rejected-traffic"
+  log_group_name = local.flow_log_group
+  pattern        = "[version, account_id, interface_id, srcaddr, dstaddr, srcport, dstport, protocol, packets, bytes, start, end, action=\"REJECT\", log_status]"
+
+  metric_transformation {
+    name      = "${var.name}-RejectedTrafficCount"
+    namespace = "VPCFlowLogs/${var.name}"
+    value     = "1"
+    unit      = "Count"
+  }
+
+  depends_on = [module.vpc]
+}
+
+resource "aws_cloudwatch_metric_alarm" "rejected_traffic" {
+  alarm_name          = "${var.name}-rejected-traffic"
+  alarm_description   = "Spike in rejected traffic in VPC ${var.name}. Possible port scan or misconfigured security group."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "${var.name}-RejectedTrafficCount"
+  namespace           = "VPCFlowLogs/${var.name}"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 100
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.flow_log_alerts.arn]
+  ok_actions    = [aws_sns_topic.flow_log_alerts.arn]
+
+  tags = local.tags
+}
+
+# ── Metric filter 3: Large data transfers ─────────────────────────────────────
+# High byte count from a single flow — potential data exfiltration from an RKE node.
+resource "aws_cloudwatch_log_metric_filter" "large_transfer" {
+  name           = "${var.name}-large-transfer"
+  log_group_name = local.flow_log_group
+  pattern        = "[version, account_id, interface_id, srcaddr, dstaddr, srcport, dstport, protocol, packets, bytes>10000000, start, end, action, log_status]"
+
+  metric_transformation {
+    name      = "${var.name}-LargeTransferCount"
+    namespace = "VPCFlowLogs/${var.name}"
+    value     = "1"
+    unit      = "Count"
+  }
+
+  depends_on = [module.vpc]
+}
+
+resource "aws_cloudwatch_metric_alarm" "large_transfer" {
+  alarm_name          = "${var.name}-large-transfer"
+  alarm_description   = "Large data transfer (>10MB in single flow) detected in VPC ${var.name}. Possible data exfiltration."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "${var.name}-LargeTransferCount"
+  namespace           = "VPCFlowLogs/${var.name}"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.flow_log_alerts.arn]
+  ok_actions    = [aws_sns_topic.flow_log_alerts.arn]
+
+  tags = local.tags
+}

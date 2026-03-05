@@ -20,3 +20,20 @@ variable "ec2_state_region" {
   type        = string
   default     = "us-east-1"
 }
+variable "secret_recovery_window_days" {
+  description = "Secrets Manager recovery window in days. Use 0 for dev (immediate deletion on destroy), 30 for production."
+  type        = number
+  default     = 0
+}
+
+variable "dockerhub_secret_arn" {
+  description = "ARN of Secrets Manager secret containing Docker Hub credentials ({\"user\":\"...\",\"token\":\"...\"}). Leave empty to skip Docker Hub auth."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror" {
+  description = "Optional alternate registry mirror URL (e.g. ECR pull-through cache endpoint). When set, all docker.io pulls are redirected through this registry."
+  type        = string
+  default     = ""
+}

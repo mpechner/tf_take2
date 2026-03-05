@@ -22,6 +22,8 @@ module "dev" {
   tags                   = var.tags
   vpc_endpoint_services_interface = var.vpc_endpoint_services_interface
   vpc_endpoint_services_gateway   = var.vpc_endpoint_services_gateway
+
+  alert_email = var.alert_email
 }
 
 # ------------------------------------------------------------------------------

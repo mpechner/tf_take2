@@ -9,7 +9,7 @@ terraform {
 resource "aws_iam_role" "terraform_execute" {
   name = "terraform-execute"
   assume_role_policy = templatefile("${path.module}/policies/terraform-assume-role-policy.json.tftpl", {
-    principal_arn = "arn:aws:iam::REDACTED_ACCOUNT_ID:root"
+    principal_arn = "arn:aws:iam::${var.principal_account_id}:root"
   })
 }
 

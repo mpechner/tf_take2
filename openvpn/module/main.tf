@@ -1,12 +1,19 @@
 # OpenVPN Server - reusable module
 # Creates security group, EC2 instance, and Elastic IP
 
+data "aws_region" "current" {}
+
+data "aws_kms_key" "ebs_default" {
+  key_id = "alias/aws/ebs"
+}
+
 locals {
   common_tags = merge(var.tags, {
     Name        = "${var.environment}-openvpn-server"
     Environment = var.environment
     Purpose     = "OpenVPN Server"
   })
+  ebs_kms_key_id = var.kms_key_arn != "" ? var.kms_key_arn : data.aws_kms_key.ebs_default.arn
 }
 
 # IAM Role for OpenVPN Server - allows reading TLS certificate from Secrets Manager
@@ -42,38 +49,60 @@ resource "aws_iam_role_policy" "openvpn_secrets" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:DescribeSecret"
-        ]
-        Resource = [
-          "arn:aws:secretsmanager:*:*:secret:${var.tls_secret_name}-*",
-          "arn:aws:secretsmanager:*:*:secret:openvpn*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:ListSecrets"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "kms:Decrypt"
-        ]
-        Resource = "arn:aws:kms:*:*:key/*"
-        Condition = {
-          StringEquals = {
-            "kms:ViaService" = "secretsmanager.*.amazonaws.com"
+    Statement = concat(
+      [
+        {
+          Sid    = "ReadSecrets"
+          Effect = "Allow"
+          Action = [
+            "secretsmanager:GetSecretValue",
+            "secretsmanager:DescribeSecret"
+          ]
+          Resource = [
+            "arn:aws:secretsmanager:*:*:secret:${var.tls_secret_name}-*",
+            "arn:aws:secretsmanager:*:*:secret:openvpn/*"
+          ]
+        },
+        {
+          # ListSecrets cannot be scoped to a resource — AWS requires Resource = "*" for List operations.
+          Sid      = "ListSecrets"
+          Effect   = "Allow"
+          Action   = ["secretsmanager:ListSecrets"]
+          Resource = "*"
+        },
+        {
+          # Secrets Manager always uses KMS for envelope encryption — either the AWS-managed key
+          # (aws/secretsmanager) or a CMK.  kms:Decrypt is always required.
+          # The kms:ViaService condition locks this to calls originating from Secrets Manager
+          # in this region only — no other KMS usage is permitted even though Resource = "*".
+          # When var.kms_key_arn is provided the resource is narrowed to that single key ARN.
+          Sid    = "DecryptSecretsManagerEnvelope"
+          Effect = "Allow"
+          Action = ["kms:Decrypt"]
+          Resource = var.kms_key_arn != "" ? var.kms_key_arn : "*"
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = "secretsmanager.${data.aws_region.current.name}.amazonaws.com"
+            }
           }
         }
-      }
-    ]
+      ],
+      # GenerateDataKey is only needed when the instance writes a secret (cert publisher).
+      # Scope to CMK if provided; fall back to * with ViaService condition otherwise.
+      var.enable_tls_sync ? [
+        {
+          Sid    = "GenerateDataKeyForWrite"
+          Effect = "Allow"
+          Action = ["kms:GenerateDataKey"]
+          Resource = var.kms_key_arn != "" ? var.kms_key_arn : "*"
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = "secretsmanager.${data.aws_region.current.name}.amazonaws.com"
+            }
+          }
+        }
+      ] : []
+    )
   })
 }
 
@@ -144,6 +173,7 @@ resource "aws_instance" "openvpn" {
     volume_size = var.root_volume_size
     volume_type = "gp3"
     encrypted   = true
+    kms_key_id  = local.ebs_kms_key_id
   }
 
   # Require IMDSv2 for security (disables IMDSv1)

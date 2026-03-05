@@ -90,7 +90,7 @@ resource "kubernetes_deployment_v1" "this" {
       spec {
         container {
           name  = "nginx"
-          image = "nginx:1.25-alpine"
+          image = "public.ecr.aws/nginx/nginx:1.25-alpine"
 
           port {
             container_port = 80

@@ -194,7 +194,7 @@ module "external_dns" {
       name  = "txt-owner-id"
       value = "external-dns"
       type  = "string"
-    }
+    },
   ]
   values = []
 
@@ -229,6 +229,11 @@ module "traefik" {
     api = {
       dashboard = true
     }
+    # Pull traefik image from public ECR instead of docker.io (avoids Docker Hub rate limits)
+    image = {
+      registry   = "public.ecr.aws"
+      repository = "docker/library/traefik"
+    }
     # Chart 30+ expects ports.<name>.expose as a dict keyed by service name (e.g. default: true)
     ports = {
       web = {
@@ -255,10 +260,10 @@ module "traefik" {
           "service.beta.kubernetes.io/aws-load-balancer-subnets" = join(",", local.public_subnet_ids)
         } : {},
         {
+          "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"       = "instance"
           "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol" = "TCP"
           "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"     = "traffic-port"
-          # All three hostnames point to this public NLB (only). Internal NLB has no hostnames to avoid duplicate DNS.
-          "external-dns.alpha.kubernetes.io/hostname"                          = "nginx.${var.route53_domain},traefik.${var.route53_domain},rancher.${var.route53_domain}"
+          "external-dns.alpha.kubernetes.io/hostname"                          = "nginx.${var.route53_domain}"
         }
       )
       spec = {
@@ -280,8 +285,10 @@ resource "kubernetes_service_v1" "traefik_internal" {
         "service.beta.kubernetes.io/aws-load-balancer-type"                    = "nlb"
         "service.beta.kubernetes.io/aws-load-balancer-internal"                = "true"
         "service.beta.kubernetes.io/aws-load-balancer-scheme"                  = "internal"
+        "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"         = "instance"
         "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol"   = "TCP"
         "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"        = "traffic-port"
+        "external-dns.alpha.kubernetes.io/hostname"                            = "traefik.${var.route53_domain},rancher.${var.route53_domain}"
       },
       length(local.private_subnet_ids) > 0 ? {
         "service.beta.kubernetes.io/aws-load-balancer-subnets" = join(",", local.private_subnet_ids)

@@ -212,7 +212,7 @@ resource "aws_s3_object" "sa_signer_pub" {
 resource "aws_secretsmanager_secret" "sa_signer" {
   name                    = "${var.cluster_name}/sa-signer-key"
   description             = "Service account signing key for IRSA"
-  recovery_window_in_days = 0
+  recovery_window_in_days = var.secret_recovery_window_days
 
   tags = merge(var.tags, {
     Cluster     = var.cluster_name

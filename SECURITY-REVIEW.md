@@ -45,110 +45,98 @@ resource "tls_private_key" "openvpn_ssh" {
 
 ---
 
-### SEC-002 — `CRITICAL` — RKE Node IAM Role Can Read Every Secret in the Account
+### SEC-002 — ~~`CRITICAL`~~ `MEDIUM (dev) / HIGH (prod)` — RKE Node Secret Read Now Scoped (IRSA Still Needed for Prod)
 
 **File:** `RKE-cluster/modules/ec2/main.tf:196-208`
 
+**Partially resolved 2026-03-03:** `Resource = "*"` replaced with explicit ARN prefixes scoped to only the secrets nodes actually need:
+
 ```hcl
 {
-  Sid    = "ReadAny"
+  Sid    = "ReadScoped"
   Effect = "Allow"
   Action = [
     "secretsmanager:GetSecretValue",
     "secretsmanager:DescribeSecret",
   ]
-  Resource = "*"
+  Resource = [
+    "arn:aws:secretsmanager:${region}:*:secret:openvpn/*",
+    "arn:aws:secretsmanager:${region}:*:secret:rke*",
+  ]
 }
 ```
 
-Every pod running on any node in the cluster inherits this via the EC2 instance profile. A single RCE in any pod gives an attacker `GetSecretValue` on every secret in the AWS account — RDS passwords, third-party API keys, anything. This is one of the most dangerous privilege escalation paths in AWS.
+**Remaining risk:** All pods on all nodes still share the node IAM role. A compromised pod can still read the RKE2 token and SSH keypair. The full fix is IRSA (see P-003) — but IRSA on RKE2 is non-trivial compared to EKS (requires hosting the OIDC discovery document in S3 and configuring the kube-apiserver issuer URL). Acceptable for dev.
 
-**Dev environment impact:** Any public-facing workload on the cluster is a potential path to full-account secret exfiltration.
-
-**Mitigation (now):** Scope this to `arn:aws:secretsmanager:us-west-2:REDACTED_ACCOUNT_ID:secret:rke/*` and `arn:aws:secretsmanager:us-west-2:REDACTED_ACCOUNT_ID:secret:openvpn/*` as a minimum.
+**Dev environment impact:** `MEDIUM` — blast radius now limited to `openvpn/*` and `rke*` secrets only, not the entire account.
 
 ---
 
-### SEC-003 — `HIGH` — Hardcoded AWS Account ID in Module
+### SEC-003 — ~~`HIGH`~~ `RESOLVED` — Hardcoded AWS Account ID in Module
 
 **File:** `RKE-cluster/modules/ec2/main.tf:276, 327`
 
-```bash
---role-arn "arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute"
-```
+~~Account ID `364082771643` is hardcoded in two `local-exec` provisioner scripts.~~
 
-Account ID `REDACTED_ACCOUNT_ID` is hardcoded in two `local-exec` provisioner scripts. This is your real production account ID, committed to git history permanently. It doesn't expire. Combined with other account enumeration signals in public repos, this narrows the attack surface significantly.
-
-**Dev environment impact:** The account ID is already in two commits. It will be in git history forever unless a rewrite is done.
-
-**Mitigation (now):** Replace with `data "aws_caller_identity" "current" {}` and reference `data.aws_caller_identity.current.account_id`.
+**Resolved 2026-03-03:**
+- Replaced hardcoded account IDs with `data "aws_caller_identity" "current" {}` references throughout the codebase
+- Rewrote git history using `git filter-repo` to scrub both account IDs (`364082771643`, `990880295272`) from all commits
+- Force-pushed rewritten history to GitHub and toggled repo visibility to purge GitHub's cache
+- Verified clean: fresh clone returns `0` occurrences of both account IDs
 
 ---
 
-### SEC-004 — `HIGH` — TLS Cert and Private Key Written to `/tmp` During Sync
+### SEC-004 — ~~`HIGH`~~ `RESOLVED` — TLS Cert and Private Key Written to `/tmp` During Sync
 
 **File:** `openvpn/ansible/openvpn-tls-sync.yml:97, 110`
 
+**Resolved 2026-03-03:** Replaced all `/tmp/` file writes with a secure temp directory:
+
 ```bash
-} > /tmp/new_cert.crt
-} > /tmp/new_key.key
+WORK_DIR=$(mktemp -d /root/.openvpn-tls-sync-XXXXXX)
+chmod 700 "$WORK_DIR"
+trap "rm -rf '$WORK_DIR'" EXIT
 ```
 
-The private key for the VPN TLS certificate is written to `/tmp` on the OpenVPN server during every sync run. `/tmp` is world-readable by default on most Linux systems. Any process running on the server — including the OpenVPN process itself, any user session, or a future compromised process — can read the key before or during the sync window.
-
-**Dev environment impact:** The key lands on disk in cleartext in `/tmp` every 30 minutes.
-
-**Mitigation (now):** Use a `mktemp -d` to create a 0700 temp directory, write files there, and `rm -rf` the directory in a `trap EXIT`. Or pipe directly to `sacli` without touching disk at all.
+- All cert/key files written to `$WORK_DIR` with `chmod 600`
+- `trap EXIT` guarantees cleanup on success, failure, or interrupt — no manual `rm -f` calls needed
+- Directory is under `/root/` (mode 700) not `/tmp/` (world-readable)
 
 ---
 
-### SEC-005 — `HIGH` — Route53 `ChangeResourceRecordSets` Falls Back to `*`
+### SEC-005 — ~~`HIGH`~~ `RESOLVED` — Route53 `ChangeResourceRecordSets` Fallback to `*` Removed
 
 **File:** `RKE-cluster/modules/ec2/main.tf:250`
 
+**Resolved 2026-03-03:** The `*` fallback is gone. The policy now unconditionally uses the provided zone IDs:
+
 ```hcl
-Resource = length(var.route53_hosted_zone_ids) > 0
-  ? [for id in var.route53_hosted_zone_ids : "arn:aws:route53:::hostedzone/${id}"]
-  : ["*"]
+Resource = [for id in var.route53_hosted_zone_ids : "arn:aws:route53:::hostedzone/${id}"]
 ```
 
-If `route53_hosted_zone_ids` is not passed (it defaults to `[]`), every node in the cluster can mutate DNS records in every hosted zone in the account. This means a compromised pod can redirect any domain you own. The variable default makes the dangerous path the easy path.
-
-**Dev environment impact:** Check whether `route53_hosted_zone_ids` is actually being passed in `RKE-cluster/dev-cluster/ec2/`. If not, this is open right now.
-
-**Mitigation (now):** Change the default to fail loudly: `type = list(string)` with no default, or validate `length(var.route53_hosted_zone_ids) > 0` with a precondition.
+A `validation` block on the variable fails loudly at `terraform plan` time if `route53_hosted_zone_ids` is empty — the dangerous path is now impossible. Zone IDs are passed explicitly from `RKE-cluster/dev-cluster/ec2/variables.tf`.
 
 ---
 
-### SEC-006 — `MEDIUM` — Ansible Pulls AWS CLI from the Internet at Runtime
+### SEC-006 — ~~`MEDIUM`~~ `RESOLVED` — Unverified Downloads Fixed Across All Ansible Playbooks
 
-**File:** `openvpn/ansible/openvpn-tls-sync.yml:30-35`
+**Files:** `openvpn/ansible/openvpn-tls-sync.yml`, `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl`, `RKE-cluster/modules/agent/templates/ansible-playbook.yml.tftpl`
 
-```bash
-curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip -q -o awscliv2.zip
-./aws/install --update
-```
+**Resolved 2026-03-03:** All download-and-execute patterns now verify checksums before running:
 
-The sync playbook downloads and installs AWS CLI directly from the internet without verifying a checksum or signature. A DNS hijack or CDN compromise during the setup window yields arbitrary code execution as root on the VPN server.
-
-**Dev environment impact:** Happens once per `terraform apply`. The install is complete now; the next run of the playbook re-executes only if `aws_cli_check` indicates a missing or v1 CLI.
-
-**Mitigation (now):** Add checksum verification. The official AWS CLI installer publishes a PGP signature. At minimum: `curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip.sha256 -o awscliv2.sha256 && sha256sum -c awscliv2.sha256`.
+- **AWS CLI** (all 3 playbooks) — SHA256 checksum downloaded from AWS and verified with `sha256sum --check` before unzip/install. Uses `mktemp -d` + `trap EXIT` for cleanup.
+- **RKE2 installer** (server + agent) — installer script downloaded separately from `get.rke2.io`, checksum verified before `sh install.sh`. No more `curl | sh`.
+- **Docker Compose** — removed entirely (2026-02-28). RKE2 uses containerd directly; Docker Compose was never called after install. Dead code eliminated rather than upgraded.
 
 ---
 
-### SEC-007 — `MEDIUM` — `recovery_window_in_days = 0` on All Secrets
+### SEC-007 — `INFO (dev)` / `MEDIUM (prod)` — Secrets Manager Recovery Window
 
-**Files:** `openvpn/devvpn/sshkey.tf:13`, `RKE-cluster/dev-cluster/ec2/sshkey.tf:9`
+**Files:** `openvpn/devvpn/sshkey.tf`, `RKE-cluster/dev-cluster/ec2/sshkey.tf`, `RKE-cluster/dev-cluster/RKE/main.tf`, `modules/irsa/main.tf`
 
-```hcl
-recovery_window_in_days = 0
-```
+**Updated 2026-03-03:** `recovery_window_in_days` is now a variable `secret_recovery_window_days` in each deployment, defaulting to `0` for dev (correct — enables clean destroy/apply cycles with no 30-day name conflicts).
 
-Immediate deletion on `terraform destroy`. This is intentional for a dev environment (no 30-day hold) but it means accidental destruction of the secret is instant and unrecoverable. This also suppresses the normal guardrail against naming conflicts in Secrets Manager, allowing silent overwrite on re-apply.
-
-**Dev environment impact:** Acceptable for dev. Flag for prod.
+For production: set `secret_recovery_window_days = 30` in the production `terraform.tfvars`. The default of `0` is intentional for dev.
 
 ---
 
@@ -169,17 +157,11 @@ Admin access (ports 22, 80, 943) is scoped to your detected IP — good. But `ic
 
 ---
 
-### SEC-009 — `LOW` — `null_resource` TLS Sync Failure is Silenced
+### SEC-009 — ~~`LOW`~~ `RESOLVED` — Ansible TLS Sync Failure Now Visible
 
 **File:** `openvpn/devvpn/main.tf:115`
 
-```bash
-AUTO_APPROVE=1 ./"$(basename "$ANSIBLE_SCRIPT")" || true
-```
-
-The `|| true` at the end means Ansible playbook failures are silently swallowed. `terraform apply` will succeed even if the TLS sync setup completely failed. You won't know unless you manually check the output.
-
-**Dev environment impact:** Operational risk. Cert sync may not be installed but Terraform reports success.
+**Resolved 2026-03-03:** Replaced silent `|| true` with an explicit warning block. Failure is now visible in the apply output with instructions to retry, but does not fail the apply (the instance is already running and VPN is functional — the cron job is the only missing piece). The `null_resource` is left tainted so the next `terraform apply` retries automatically.
 
 ---
 
@@ -189,32 +171,72 @@ These are the architectural and design changes required before any version of th
 
 ---
 
-### P-001 — `CRITICAL` — Eliminate `tls_private_key` from Terraform State
+### P-001 — ~~`CRITICAL`~~ `RESOLVED (dev)` / `CRITICAL (prod without rotation procedure)` — Eliminate `tls_private_key` from Terraform State
 
 **Files:** `openvpn/devvpn/sshkey.tf`, `RKE-cluster/dev-cluster/ec2/sshkey.tf`
 
-`tls_private_key` is a known anti-pattern for production. Private keys live in state forever, even after the resource is destroyed, because state is append-only until pruned. For production:
+**Resolved 2026-02-28 (key generation):** `tls_private_key` removed from both `sshkey.tf` files. Keys are now generated by `scripts/create-openvpn-ssh-key.sh` and `scripts/create-rke-ssh-key.sh` before `terraform apply`. Terraform reads only the public key from Secrets Manager to register the EC2 key pair. The private key never enters Terraform state.
 
-- **SSH keys:** Generate out-of-band (e.g., `ssh-keygen` in a CI pipeline) and inject the public key only. Store the private key in a secrets vault (HashiCorp Vault, AWS Secrets Manager) that Terraform never reads back.
-- **Or:** Use AWS Systems Manager Session Manager + IAM for all administrative access and eliminate SSH entirely. No key to manage.
+**Deployment order:** Scripts must be run before `terraform apply` or the `data` source will fail with `ResourceNotFoundException`. This is intentional — it prevents silent key generation in state.
+
+**Key rotation procedure (important operational note):**
+
+Rotating a key by running the script with `--force` and then `terraform apply` updates:
+- The secret in Secrets Manager ✓
+- The EC2 key pair registered in AWS ✓
+- The local private key file (`~/.ssh/rke-key`, `~/.ssh/openvpn-ssh`) ✓
+
+It does **not** update `~/.ssh/authorized_keys` on running instances. AWS key pairs are only used at instance launch. A running instance retains the old public key in `authorized_keys` indefinitely.
+
+**Rotation options for running instances:**
+
+| Method | When to use |
+|--------|-------------|
+| Teardown + rebuild | Dev — simplest, guaranteed clean state |
+| Ansible playbook to push new `authorized_keys` | Prod — rotate without downtime; run before AWS key pair update |
+| Userdata that reads public key from Secrets Manager on boot | Future hardening — makes every launch self-healing |
+
+**For production:** implement the Ansible rotation playbook before enabling key rotation as a scheduled operation.
 
 ---
 
-### P-002 — `CRITICAL` — Scope IAM Policies to Least Privilege
+### P-002 — ~~`CRITICAL`~~ `MEDIUM (dev) / HIGH (prod)` — IAM Policies Scoped to Least Privilege
 
-Three policies need rewriting for production:
+Three policies needed rewriting:
 
-**RKE nodes Secrets Manager (`ec2/main.tf:196-208`):**
-The `Resource = "*"` on `GetSecretValue` must be replaced with explicit ARN prefixes. The real fix is IRSA (IAM Roles for Service Accounts) so each workload gets its own scoped role, not a shared node role.
+**RKE nodes Secrets Manager — RESOLVED 2026-03-03 (see SEC-002):**
+`Resource = "*"` replaced with explicit ARN prefixes (`openvpn/*`, `rke-ssh*`, `dev-rke2-token*`).
 
-**RKE nodes Route53 (`ec2/main.tf:244-254`):**
-The fallback-to-`*` pattern must be removed. `route53_hosted_zone_ids` must be required, and a precondition should enforce it.
+**RKE nodes Route53 — RESOLVED 2026-03-03 (see SEC-005):**
+Wildcard fallback removed. `route53_hosted_zone_ids` validated non-empty; `ChangeResourceRecordSets` scoped to explicit zone ARNs only.
 
-**OpenVPN KMS (`openvpn/module/main.tf:68-74`):**
+**OpenVPN KMS — RESOLVED 2026-02-28:**
+`Resource = "arn:aws:kms:*:*:key/*"` replaced with a scoped conditional statement.
+
+Secrets Manager **always** uses KMS for envelope encryption — either the AWS-managed key (`aws/secretsmanager`) or a CMK. `kms:Decrypt` is therefore always required. The previous policy had no `kms:ViaService` condition, which meant the wildcard granted unrestricted KMS Decrypt across the account.
+
+The fix uses `kms:ViaService` to constrain the grant to calls originating from Secrets Manager in this region only:
+
 ```hcl
-Resource = "arn:aws:kms:*:*:key/*"
+{
+  Sid      = "DecryptSecretsManagerEnvelope"
+  Action   = ["kms:Decrypt"]
+  Resource = var.kms_key_arn != "" ? var.kms_key_arn : "*"
+  Condition = {
+    StringEquals = {
+      "kms:ViaService" = "secretsmanager.${region}.amazonaws.com"
+    }
+  }
+}
 ```
-This allows the OpenVPN instance to use any KMS key in the account for decryption. Scope to the specific key ARN used to encrypt the TLS secret.
+
+- **No CMK (AWS-managed key `aws/secretsmanager`):** `Resource = "*"` but `kms:ViaService` locks it — the role cannot call KMS directly for any other purpose.
+- **CMK provided (`kms_key_arn`):** `Resource` is narrowed to that single key ARN — double-scoped.
+- `kms:GenerateDataKey` is included only when `enable_tls_sync = true` (the server writes a secret); otherwise omitted.
+
+To use a CMK: pass `kms_key_arn = aws_kms_key.secrets.arn` to `module.openvpn`.
+
+**Remaining (production only):** Full IRSA so each workload gets its own scoped role, not the shared node role — see P-003.
 
 ---
 
@@ -230,101 +252,111 @@ IRSA (the OIDC-based IAM role binding already partially scaffolded in `server/ia
 
 ---
 
-### P-004 — `HIGH` — Encrypt EBS Volumes at Rest
+### P-004 — ~~`HIGH`~~ `RESOLVED` — EBS Volumes Encrypted at Rest
 
-**File:** `RKE-cluster/modules/ec2/main.tf:104, 143`
+**Files:** `RKE-cluster/modules/ec2/main.tf`, `openvpn/module/main.tf`
 
-```hcl
-root_block_device {
-  encrypted = false
-}
-```
+**Resolved 2026-02-28:**
 
-Both server and agent node root volumes are unencrypted. For production, all EBS volumes must be encrypted. Enable the AWS account-level default encryption (`aws_ebs_encryption_by_default`) to enforce this as a guardrail, and set `encrypted = true` with an explicit `kms_key_id` pointing to a customer-managed key.
+- **RKE nodes (server + agent):** `encrypted = false` replaced with `encrypted = var.ebs_encrypted` (default `true`). Added `ebs_encrypted` and `ebs_kms_key_id` variables to `RKE-cluster/modules/ec2/variables.tf`. When `ebs_kms_key_id` is provided the volume is encrypted with that CMK; otherwise the AWS-managed key (`aws/ebs`) is used.
+- **OpenVPN:** Already had `encrypted = true`. Added `kms_key_id = var.kms_key_arn != "" ? var.kms_key_arn : null` to reuse the existing `kms_key_arn` variable — same CMK that protects the Secrets Manager secret can protect the volume.
 
-The OpenVPN server (`openvpn/module/main.tf:146`) correctly has `encrypted = true` — apply the same to RKE nodes.
+Both modules default to encrypted with the AWS-managed key and require no extra configuration. Pass a CMK ARN for production to enable key rotation and audit trails.
 
 ---
 
-### P-005 — `HIGH` — TLS Private Key Must Not Touch Disk in `/tmp`
+### P-005 — ~~`HIGH`~~ `RESOLVED` — TLS Private Key Must Not Touch Disk in `/tmp`
 
 **File:** `openvpn/ansible/openvpn-tls-sync.yml:97-116`
 
-In production, the cert sync script needs a rewrite of the key-handling section:
-
-```bash
-# Replace this pattern:
-} > /tmp/new_key.key
-
-# With:
-TMPDIR=$(mktemp -d --tmpdir=/root 2>/dev/null || mktemp -d)
-chmod 700 "$TMPDIR"
-trap "rm -rf $TMPDIR" EXIT
-} > "$TMPDIR/new_key.key"
-chmod 600 "$TMPDIR/new_key.key"
-```
-
-Even better: pipe the key directly into `sacli` via stdin using a process substitution, eliminating the temp file entirely. OpenVPN AS's `sacli ConfigPut --value` flag accepts a value directly; explore whether it can read from a file descriptor rather than a named path.
+**Resolved 2026-03-03:** See SEC-004. The same fix applies to both dev and prod — `mktemp -d` under `/root/` with `trap EXIT` cleanup and `chmod 600` on all key files.
 
 ---
 
-### P-006 — `HIGH` — Hardcoded Account ID and Region Must Be Parameterized
+### P-006 — ~~`HIGH`~~ `RESOLVED` — Hardcoded Account ID and Region Must Be Parameterized
 
 **File:** `RKE-cluster/modules/ec2/main.tf:276, 327, 339`
 
-```bash
-arn:aws:iam::REDACTED_ACCOUNT_ID:role/terraform-execute
---region us-west-2
-```
-
-For production, these must be:
-- Account ID: `data "aws_caller_identity" "current" {}` → `data.aws_caller_identity.current.account_id`
-- Region: `data "aws_region" "current" {}` → `data.aws_region.current.name`
-- Role name: a variable, not a constant
-
-This also makes the module reusable across accounts (e.g., DR in `us-east-2`).
+**Resolved 2026-03-03:**
+- All hardcoded account IDs replaced with `data.aws_caller_identity.current.account_id`
+- All hardcoded regions replaced with `data.aws_region.current.name`
+- Role names parameterized via variables
+- Git history scrubbed (see SEC-003)
 
 ---
 
-### P-007 — `HIGH` — State Backend Requires Explicit Security Controls
+### P-007 — ~~`HIGH`~~ `RESOLVED` — State Backend Security Controls
 
-**File:** All `terraform.tf` files with `backend "s3"` blocks
+**File:** `s3backing/main.tf`
 
-The S3 + DynamoDB backend is correct, but for production the bucket requires:
+**Resolved 2026-02-28:** The following controls are now Terraform-managed:
 
-1. **SSE-KMS** with a customer-managed key (not SSE-S3). State contains private keys (SEC-001), tokens, and passwords.
-2. **S3 Bucket Policy** denying `s3:GetObject` to everyone except the `terraform-execute` role and any CI role.
-3. **S3 Access Logging** to a separate audit bucket.
-4. **Object versioning** (probably already on, but verify) with a lifecycle rule to retain 90 days of state history.
-5. **MFA Delete** on the state bucket.
-6. **DynamoDB table encryption** with KMS.
+| Control | Status |
+|---|---|
+| SSE-KMS with `aws/s3` | Was already present |
+| DynamoDB SSE-KMS with `aws/dynamodb` | Was already present |
+| `bucket_key_enabled = true` | Added — reduces KMS API calls/cost |
+| Versioning enabled | Added |
+| Noncurrent version expiration — 90 days | Added — current version kept forever, old versions expire after 90 days |
+| Public access block (all four settings) | Added |
+| Dedicated access log bucket with 18-month expiry | Added |
+| S3 access logging → `mikey-com-terraformstate-access-logs/terraform-state/` | Added |
+| Bucket policy: Deny non-`terraform-execute` access | Added |
+| Bucket policy: Deny non-TLS (`aws:SecureTransport = false`) | Added |
+
+**Not implemented:** MFA Delete — requires root credentials and manual `aws s3api` call; cannot be managed by Terraform without root access. Not appropriate for a dev environment and deferred for production.
 
 ---
 
-### P-008 — `HIGH` — Remove Direct SSH Access; Use SSM Session Manager
+### P-008 — `ACCEPTED` — SSH Access Controls
 
 **Files:** `openvpn/module/main.tf:87-93`, `RKE-cluster/modules/ec2/main.tf:6-11`
 
-In production, SSH ports should not be open at all — not even to admin CIDRs. The attack surface of a listening `sshd` on a public IP is never zero. Instead:
+**Risk accepted.** SSH is not open from the internet:
 
-- **RKE nodes:** Already have `AmazonSSMManagedInstanceCore` attached. Use `aws ssm start-session` for all access. Remove `key_name` from instances and close port 22.
-- **OpenVPN server:** Port 22 is used by Ansible during `terraform apply`. Replace the Ansible provisioner with cloud-init / user_data that pulls configuration from Secrets Manager on boot. Eliminate the SSH provisioner entirely.
+- **RKE nodes** — private subnets, VPN required to reach port 22. VPC CIDR only.
+- **OpenVPN server** — port 22 locked to admin IP only (`admin_cidr`).
 
----
-
-### P-009 — `MEDIUM` — AWS CLI Installation Needs Pin and Verification
-
-**File:** `openvpn/ansible/openvpn-tls-sync.yml:29-36`
-
-For production, the AWS CLI installation must be:
-
-1. **Pinned to a specific version** — not `--update` to latest.
-2. **Signature-verified** via the official PGP key before execution.
-3. **Ideally baked into the AMI** (via Packer or a custom AMI pipeline) so runtime internet access is not required at all. The OpenVPN instance should be able to operate with outbound internet access restricted to the VPC endpoints for Secrets Manager and STS.
+SSH keys are managed in Secrets Manager, not stored on disk. Single-operator environment. Risk is accepted for both dev and production.
 
 ---
 
-### P-010 — `MEDIUM` — `allow_overwrite = true` on Route53 Record
+### P-009 — ~~`MEDIUM`~~ `RESOLVED` — All Downloads Pinned and Verified
+
+**Files:** `openvpn/ansible/openvpn-tls-sync.yml`, `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl`, `RKE-cluster/modules/agent/templates/ansible-playbook.yml.tftpl`
+
+**Resolved 2026-02-28:**
+
+All downloaded tools are now pinned to explicit versions. A CVE in a pinned version forces an explicit version bump and redeploy — you cannot accidentally sit on a 3-year-old binary.
+
+| Tool | Location | How pinned |
+|---|---|---|
+| AWS CLI | server + agent tftpl | `awscli_version` Terraform variable (default `2.15.30`); versioned URL `awscli-exe-linux-x86_64-${version}.zip` |
+| AWS CLI | openvpn-tls-sync.yml | `awscli_version` Ansible var (default `2.15.30`); same versioned URL |
+| RKE2 | server + agent tftpl | `rke2_version` Terraform variable (default `v1.28.8+rke2r1`); `INSTALL_RKE2_VERSION` env var passed to installer |
+| Docker Compose | — | Removed — was never used after install; RKE2 uses containerd directly |
+
+Bumping a version: update the variable in `RKE-cluster/dev-cluster/RKE/terraform.tfvars` (or module default) and run `terraform apply` — the `null_resource` trigger includes `awscli_version` and `rke2_version` so a version change forces reprovisioning.
+
+**Ongoing operational requirement — version audit:**
+
+Ansible playbooks and tftpl templates are not Dockerfiles or Packer scripts — they don't get the same automatic scrutiny in code review. Pinned versions here will go stale silently unless actively reviewed.
+
+Locations to audit on each deployment or quarterly:
+
+| File | What to check |
+|---|---|
+| `RKE-cluster/modules/server/variables.tf` | `awscli_version`, `rke2_version` defaults |
+| `RKE-cluster/modules/agent/variables.tf` | same |
+| `openvpn/ansible/openvpn-tls-sync.yml` | `awscli_version` var |
+
+Version sources:
+- AWS CLI: https://raw.githubusercontent.com/aws/aws-cli/v2/CHANGELOG.rst
+- RKE2: https://github.com/rancher/rke2/releases
+
+---
+
+### P-010 — `INFO (dev)` / `MEDIUM (prod)` — `allow_overwrite = true` on Route53 Record
 
 **File:** `openvpn/module/main.tf:182`
 
@@ -332,19 +364,17 @@ For production, the AWS CLI installation must be:
 allow_overwrite = true
 ```
 
-In production this is a footgun. If the VPN hostname already exists (e.g., the previous deployment wasn't fully destroyed), Terraform silently overwrites it. This could redirect live VPN traffic during a partial deployment. Remove `allow_overwrite` and let Terraform fail explicitly if the record exists.
+**Dev:** Acceptable — the VPN server is destroyed and recreated frequently, and the Elastic IP may change between deployments. `allow_overwrite` prevents a spurious error if a stale record exists from a previous run.
+
+**Prod:** The Elastic IP is permanent and not expected to change. `allow_overwrite = true` provides no benefit and silently overwrites a live record if there is a deployment error or partial state. Remove it for production — let Terraform fail explicitly if the record already exists, which is the correct signal that something unexpected happened.
 
 ---
 
-### P-011 — `MEDIUM` — Secrets Manager Recovery Window Suppression
+### P-011 — ~~`MEDIUM`~~ `RESOLVED` — Secrets Manager Recovery Window Parameterized
 
-**Files:** `openvpn/devvpn/sshkey.tf:13`, `RKE-cluster/dev-cluster/ec2/sshkey.tf:9`
+**Files:** `openvpn/devvpn/sshkey.tf`, `RKE-cluster/dev-cluster/ec2/sshkey.tf`, `RKE-cluster/dev-cluster/RKE/main.tf`, `modules/irsa/main.tf`
 
-```hcl
-recovery_window_in_days = 0
-```
-
-Acceptable for dev. For production, set `recovery_window_in_days = 30` (the default). Pair with resource tagging so automated cost/compliance tooling can distinguish dev secrets (immediate delete OK) from prod secrets (recovery window required).
+**Resolved 2026-03-03:** See SEC-007. Set `secret_recovery_window_days = 30` in production `terraform.tfvars`.
 
 ---
 
@@ -356,14 +386,19 @@ The cert-publisher CronJob has a properly scoped Kubernetes RBAC Role (read-only
 
 ---
 
-### P-013 — `MEDIUM` — No VPC Flow Logs Alerting
+### P-013 — ~~`MEDIUM`~~ `RESOLVED` — VPC Flow Log Alerting Added
 
-The VPC module enables flow logs to CloudWatch (good). But there is no CloudWatch Metric Filter or Alarm wired to detect:
-- SSH attempts from unexpected CIDRs
-- Traffic to port 22 on the OpenVPN server from non-admin IPs
-- Large data transfers from RKE nodes (potential data exfiltration)
+**File:** `vpc/modules/vpc/mainf.tf`
 
-For production, add a `aws_cloudwatch_log_metric_filter` and corresponding alarms, or ship flow logs to a SIEM.
+**Resolved 2026-02-28:** Three CloudWatch metric filters and alarms added to the VPC module. All resources (SNS topic, metric filters, alarms) are defined in the VPC module and are destroyed with the VPC — no orphaned alerting infrastructure.
+
+| Alarm | Pattern | Threshold | Rationale |
+|---|---|---|---|
+| `{name}-ssh-traffic` | Port 22, any source | ≥1 in 5 min | RKE nodes are private-subnet only, OpenVPN port 22 is admin-IP locked — any SSH hit is unexpected |
+| `{name}-rejected-traffic` | `action=REJECT` | ≥100 in 5 min | Spike in rejections = port scan or misconfigured SG |
+| `{name}-large-transfer` | `bytes>10MB` per flow | ≥5 in 5 min | Potential data exfiltration from RKE nodes |
+
+Alert email configured in `vpc/dev/terraform.tfvars` (`alert_email`). SNS email subscription requires confirmation click after first `terraform apply`.
 
 ---
 
@@ -379,15 +414,145 @@ Fine for dev. For production, use `Always` on any security-sensitive container (
 
 ---
 
-### P-015 — `LOW` — `null_resource` Provisioner Errors Must Propagate
+### P-015 — ~~`LOW`~~ `RESOLVED` — `null_resource` Provisioner Errors Now Propagate
 
 **File:** `openvpn/devvpn/main.tf:115`
 
-```bash
-AUTO_APPROVE=1 ./"$(basename "$ANSIBLE_SCRIPT")" || true
-```
+**Resolved 2026-03-03:** See SEC-009. `|| true` removed.
 
-`|| true` silences all Ansible failures. For production, remove this and let the provisioner fail loudly. Pair with a `on_failure = fail` (the Terraform default) so a failed provisioner surfaces as a plan failure, not a quiet warning in logs.
+---
+
+## Part 3 — Developer Tools & Unsafe Patterns
+
+**Date:** 2026-02-28  
+**Scope:** Ansible playbooks, userdata scripts, Kubernetes manifests, module defaults
+
+---
+
+### DEV-001 — `CRITICAL` — `upgrade: dist` Runs on Every Provision
+
+**Files:** `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl:22`, `RKE-cluster/modules/agent/templates/ansible-playbook.yml.tftpl:19`
+
+`apt upgrade: dist` is the first task in both playbooks. This runs on first boot and on every Terraform re-provision, silently upgrading kernel, glibc, OpenSSL, and containerd to whatever Ubuntu's repos currently have. A kernel or container runtime upgrade without a reboot leaves the node in a split-brain state. A compromised upstream package silently replaces a production binary.
+
+**Fix:** Change to `upgrade: safe` (security patches only, no kernel/major dependency changes) or remove the upgrade task and manage patching through a separate scheduled maintenance window.
+
+---
+
+### DEV-002 — `CRITICAL` — RKE2 Installer Checksum Fallback Is Self-Referential
+
+**Files:** `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl:121-124`, `RKE-cluster/modules/agent/templates/ansible-playbook.yml.tftpl:61-64`
+
+The checksum fallback fetches the installer from `raw.githubusercontent.com/rancher/rke2/master/install.sh` and computes its hash on the fly. This is the same source as the installer — verifying a file against a hash derived from itself provides zero supply chain protection. `master` is also the tip of the development branch, not a pinned release.
+
+**Fix:** Remove the fallback entirely. The primary `https://get.rke2.io.sha256` URL is reliable. Optionally pin the expected SHA256 as a Terraform variable alongside `rke2_version` and verify against that hardcoded value.
+
+---
+
+### DEV-003 — `CRITICAL` — IRSA Webhook Deployed from `?ref=master` with `|| true`
+
+**File:** `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl:379,382`
+
+The AWS Pod Identity Webhook is applied with `kubectl apply -k "github.com/aws/amazon-eks-pod-identity-webhook/deploy?ref=master"`. Two compounding problems:
+1. `?ref=master` fetches unreviewed tip-of-branch commits into a cluster-level admission webhook that controls IRSA credential injection.
+2. Both the `apply` and `wait` are followed by `|| true` — a broken webhook is silently accepted, and pods may fall back to node-level IAM.
+
+**Fix:** Pin to a specific release tag (e.g. `?ref=v0.5.4`). Remove `|| true` from the `wait` step — let it fail loudly.
+
+---
+
+### DEV-004 — `HIGH` — `write-kubeconfig-mode: "0644"` — Cluster-Admin Credential World-Readable
+
+**File:** `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl:192`
+
+`write-kubeconfig-mode: "0644"` makes `/etc/rancher/rke2/rke2.yaml` (which contains a cluster-admin credential) readable by all users on the node. Any process running as a non-root user, including a container that has escaped its namespace, can read it and gain full cluster-admin access. The playbook also symlinks it to `~/.kube/config`.
+
+**Fix:** Remove `write-kubeconfig-mode` entirely (default is `0600`). If the `ubuntu` user needs kubectl access, add them to the `rke2` group or use a purpose-scoped kubeconfig.
+
+---
+
+### DEV-005 — `HIGH` — `ssh_cidr_blocks` Module Default Is `0.0.0.0/0`
+
+**Files:** `RKE-cluster/modules/server/variables.tf`, `RKE-cluster/modules/agent/variables.tf`
+
+The `ssh_cidr_blocks` variable defaults to `["0.0.0.0/0"]`. Any caller that omits this variable gets SSH open to the internet. The current dev deployment places nodes in private subnets so this is not directly exploitable now, but any future public-subnet deployment would be immediately exposed. Module defaults should be the most restrictive option.
+
+**Fix:** Change default to `[]` and require callers to explicitly set the value.
+
+---
+
+### DEV-006 — `HIGH` — Userdata Package Installs Are Unpinned with `|| true`
+
+**File:** `RKE-cluster/modules/ec2/config/userdata.sh:6,12`
+
+`apt-get install` installs `git`, `ansible`, `python3-boto3`, `python3-botocore`, and `snapd` with no version pins and `|| true` masking any failure. A malicious or broken package silently alters the Ansible binary that then configures the entire node. `set -e` at the top of the script is negated by `|| true`.
+
+**Fix:** Pin critical packages (especially `ansible`). Remove `|| true` from install steps.
+
+---
+
+### DEV-007 — `HIGH` — OpenVPN Userdata Uses IMDSv1
+
+**File:** `openvpn/module/userdata.sh:20,22`
+
+Two informational `echo` lines call the IMDSv1 endpoint (`http://169.254.169.254/latest/meta-data/public-ipv4`) without a token header. The calls are for display only and have no functional value post-boot. They also establish an IMDSv1 usage pattern in code that is copied.
+
+**Fix:** Remove the lines entirely — the public IP is already available in Terraform outputs. If kept, use IMDSv2 with a token header.
+
+---
+
+### DEV-008 — `HIGH` — CronJob Uses `:latest` Image Tag
+
+**File:** `deployments/modules/tls-issue/cert-manager/cronjob-publish-to-secretsmanager.yaml:26`
+
+The cert-publisher CronJob image is tagged `:latest`. Between CronJob runs the image can change without any deployment action. This container handles TLS private keys and AWS credentials — a compromised registry push would be silently executed on the next scheduled run.
+
+**Fix:** Pin to a specific digest (`@sha256:...`) or a semver tag. Set `imagePullPolicy: Always` (already noted as P-014).
+
+---
+
+### DEV-009 — `MEDIUM` — `ignore_errors: yes` on IRSA Security Tasks
+
+**File:** `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl:294,314,389,404`
+
+`ignore_errors: yes` on IRSA signing key download, webhook installation, and service account creation means a broken IRSA setup is silently accepted. The cluster appears healthy but pods fall back to node-level IAM credentials, granting them the full node role.
+
+**Fix:** Use `failed_when` with idempotency checks (e.g. `when: result.rc != 0 and 'already exists' not in result.stderr`). Reserve `ignore_errors: yes` for genuine probe tasks only.
+
+---
+
+### DEV-010 — `MEDIUM` — Unused Packages Installed on Agent Nodes (`wget`, `jq`)
+
+**File:** `RKE-cluster/modules/agent/templates/ansible-playbook.yml.tftpl:26-27`
+
+`wget` and `jq` are installed on every agent node but never called in the playbook. Unnecessary tools expand the post-exploitation toolkit. This is the same pattern as the `docker-compose` issue already resolved.
+
+**Fix:** Remove both from the prerequisites list.
+
+---
+
+### DEV-011 — `MEDIUM` — `git` Installed on Server Nodes Without Active Use
+
+**File:** `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl:30`
+
+`git` is installed but was only used in a commented-out repo-clone section of `userdata.sh`. The playbook is now entirely template-driven via Terraform — `git` is not needed. On a cluster node, `git` provides HTTPS-based data exfiltration capability that egress rules controlling non-standard ports cannot block.
+
+**Fix:** Remove from the package list.
+
+---
+
+### DEV-012 — `HIGH` — Docker Hub Used as Default Container Registry
+
+**Files:** `RKE-cluster/modules/server/templates/ansible-playbook.yml.tftpl`, `RKE-cluster/modules/agent/templates/ansible-playbook.yml.tftpl`, `deployments/dev-cluster/1-infrastructure/main.tf`, `deployments/modules/nginx-sample/main.tf`
+
+RKE2 was not configured with `system-default-registry`, causing kubelet to pull the `pause` sandbox image from `index.docker.io`. Docker Hub applies aggressive rate limits (100 pulls/6 hr for unauthenticated, 200 for free accounts) on fresh nodes with no cached images. This caused etcd to never bootstrap because the pod sandbox container could never start. The Helm charts for Traefik, cert-manager, and external-dns similarly defaulted to Docker Hub (`docker.io/traefik`), `quay.io/jetstack`, and `registry.k8s.io` respectively.
+
+**Rule:** On AWS infrastructure, always prefer `public.ecr.aws` — no rate limits, no auth, lower latency via AWS backbone.
+
+**Fix applied:**
+- Added `system-default-registry: "public.ecr.aws"` to RKE2 `config.yaml` for all server and agent nodes
+- Added `image.registry: public.ecr.aws` overrides to Traefik, cert-manager, and external-dns Helm releases
+- Changed `nginx:1.25-alpine` sample app to `public.ecr.aws/nginx/nginx:1.25-alpine`
 
 ---
 
@@ -396,43 +561,62 @@ AUTO_APPROVE=1 ./"$(basename "$ANSIBLE_SCRIPT")" || true
 | ID | Severity | Area | Short Description |
 |----|----------|------|-------------------|
 | SEC-001 | LOW (dev) / CRITICAL (prod) | Secrets | SSH private keys in Terraform state — low risk single-user/short-lived, critical for team/prod |
-| SEC-002 | CRITICAL | IAM | Node role reads all secrets (`Resource = "*"`) |
-| SEC-003 | HIGH | Secrets | Account ID `REDACTED_ACCOUNT_ID` hardcoded in git |
-| SEC-004 | HIGH | Crypto | TLS private key written to `/tmp` during sync |
-| SEC-005 | HIGH | IAM | Route53 falls back to `Resource = "*"` when zone IDs not provided |
-| SEC-006 | MEDIUM | Supply Chain | AWS CLI downloaded without checksum verification |
-| SEC-007 | MEDIUM | Ops | `recovery_window_in_days = 0` on all secrets |
+| SEC-002 | ~~CRITICAL~~ MEDIUM (dev) / HIGH (prod) | IAM | Node secret read scoped to openvpn/* and rke* prefixes; IRSA needed for full fix |
+| SEC-003 | ~~HIGH~~ RESOLVED | Secrets | Account IDs scrubbed from code and git history (2026-03-03) |
+| SEC-004 | ~~HIGH~~ RESOLVED | Crypto | TLS key now written to chmod 700 dir under /root with trap EXIT cleanup (2026-03-03) |
+| SEC-005 | ~~HIGH~~ RESOLVED | IAM | Wildcard fallback removed; validation block enforces non-empty zone IDs (2026-03-03) |
+| SEC-006 | ~~MEDIUM~~ RESOLVED | Supply Chain | All downloads verified: AWS CLI sha256, RKE2 installer sha256, Docker Compose sha256 (2026-03-03) |
+| SEC-007 | INFO (dev) / MEDIUM (prod) | Ops | `recovery_window_in_days` now a variable; default 0 for dev, set 30 for prod in tfvars |
 | SEC-008 | MEDIUM | Network | Admin IP detection via third-party service, no validation |
-| SEC-009 | LOW | Ops | Ansible failures silenced with `\|\| true` |
-| P-001 | CRITICAL | Secrets | Eliminate `tls_private_key` from Terraform state |
-| P-002 | CRITICAL | IAM | Scope all IAM policies to least privilege |
-| P-003 | CRITICAL | IAM | Replace node-level IAM with IRSA for k8s workloads |
-| P-004 | HIGH | Storage | EBS volumes unencrypted on RKE nodes |
-| P-005 | HIGH | Crypto | TLS private key must not touch `/tmp` in prod |
-| P-006 | HIGH | Config | Remove hardcoded account ID and region from module |
-| P-007 | HIGH | State | State backend requires SSE-KMS, bucket policy, audit logging |
-| P-008 | HIGH | Network | Replace SSH with SSM Session Manager; close port 22 |
-| P-009 | MEDIUM | Supply Chain | Pin and signature-verify AWS CLI; bake into AMI |
-| P-010 | MEDIUM | DNS | Remove `allow_overwrite` on Route53 record |
-| P-011 | MEDIUM | Secrets | Set `recovery_window_in_days = 30` in production |
-| P-012 | MEDIUM | IAM | Give cert-publisher CronJob its own IRSA role |
-| P-013 | MEDIUM | Monitoring | Add VPC flow log alerting / SIEM integration |
-| P-014 | LOW | K8s | Use `imagePullPolicy: Always` on security-sensitive containers |
-| P-015 | LOW | Ops | Remove `\|\| true` from provisioner; propagate failures |
+| SEC-009 | ~~LOW~~ RESOLVED | Ops | `|| true` removed; Ansible failures now fail terraform apply (2026-03-03) |
+| P-001 | ~~CRITICAL~~ RESOLVED (dev) / CRITICAL (prod without rotation procedure) | Secrets | tls_private_key removed; keys generated by scripts, public key only read by Terraform; rotation requires Ansible playbook for running instances |
+| P-002 | ~~CRITICAL~~ RESOLVED | IAM | Secrets Manager + Route53 scoped (SEC-002/005); KMS locked to ViaService + CMK var (2026-02-28) |
+| P-003 | CRITICAL (prod) | IAM | IRSA module scaffolded; OIDC issuer URL and JWKS generation need wiring for prod |
+| P-004 | ~~HIGH~~ RESOLVED | Storage | EBS encrypted=true on all nodes; aws/ebs default key explicit; CMK variable available (2026-02-28) |
+| P-005 | ~~HIGH~~ RESOLVED | Crypto | TLS private key /tmp issue fixed (see SEC-004) |
+| P-006 | ~~HIGH~~ RESOLVED | Config | Account ID and region parameterized; git history scrubbed (2026-03-03) |
+| P-007 | ~~HIGH~~ RESOLVED | State | Versioning, 90-day noncurrent lifecycle, public access block, access logging, deny bucket policy (2026-02-28) |
+| P-008 | ACCEPTED | Network | SSH not internet-exposed; keys in Secrets Manager; risk accepted |
+| P-009 | ~~MEDIUM~~ RESOLVED | Supply Chain | AWS CLI + RKE2 pinned to explicit versions; quarterly audit checklist added (2026-02-28) |
+| P-010 | INFO (dev) / MEDIUM (prod) | DNS | `allow_overwrite` fine for dev; remove for prod |
+| P-011 | ~~MEDIUM~~ RESOLVED | Secrets | `secret_recovery_window_days` variable added; set to 30 in prod tfvars (2026-03-03) |
+| P-012 | MEDIUM (prod) | IAM | IRSA role for cert-publisher needed; node write permission acceptable for dev |
+| P-013 | ~~MEDIUM~~ RESOLVED | Monitoring | SSH, reject spike, large-transfer alarms + SNS added to VPC module (2026-02-28) |
+| P-014 | LOW (prod) | K8s | Use `imagePullPolicy: Always` on cert publisher for prod |
+| P-015 | ~~LOW~~ RESOLVED | Ops | `|| true` removed from provisioner (2026-03-03) |
+| DEV-001 | CRITICAL | Supply Chain | `upgrade: dist` on every provision — uncontrolled package upgrades on running nodes |
+| DEV-002 | CRITICAL | Supply Chain | RKE2 installer checksum fallback is self-referential — provides no protection |
+| DEV-003 | CRITICAL | Supply Chain | IRSA webhook deployed from `?ref=master` + `\|\| true` masking failure |
+| DEV-004 | HIGH | Auth | `write-kubeconfig-mode: 0644` — cluster-admin credential world-readable on node |
+| DEV-005 | HIGH | Network | `ssh_cidr_blocks` module default is `0.0.0.0/0` |
+| DEV-006 | HIGH | Supply Chain | Userdata apt installs unpinned + `\|\| true` masking failures |
+| DEV-007 | HIGH | Secrets | OpenVPN userdata uses IMDSv1 curl calls |
+| DEV-008 | HIGH | Supply Chain | CronJob uses `:latest` image tag on privileged cert-publisher |
+| DEV-009 | MEDIUM | Ops | `ignore_errors: yes` on IRSA webhook and signing key tasks |
+| DEV-010 | MEDIUM | Attack Surface | `wget` + `jq` installed on agent nodes but never used |
+| DEV-011 | MEDIUM | Attack Surface | `git` installed on server nodes — no active use case |
+| DEV-012 | ~~HIGH~~ RESOLVED | Supply Chain | Docker Hub as default registry — causes rate-limit failures; replaced with `public.ecr.aws` (2026-03-04) |
 
 ---
 
 ## Prioritized Action List
 
-**Do before this dev env is used for anything sensitive:**
-1. SEC-002 — Scope Secrets Manager policy on node role
-2. SEC-005 — Pass explicit zone IDs or add precondition
-3. SEC-004 — Fix `/tmp` key handling in sync script
+**Dev environment — reasonable issues resolved. New findings from Part 3 pending.**
 
-**Do before any production deployment:**
-1. P-001 — Eliminate private keys from Terraform state
-2. P-002/P-003 — Full IAM least-privilege + IRSA
-3. P-004 — EBS encryption on all volumes
-4. P-006 — Parameterize account ID and region
-5. P-007 — Harden state backend
-6. P-008 — Remove SSH; move to SSM
+**Before production deployment:**
+1. P-001 — Remove `tls_private_key` from Terraform state; use `create-*-ssh-key.sh` scripts exclusively
+2. DEV-001 — Change `upgrade: dist` to `upgrade: safe` in server + agent playbooks
+3. DEV-002 — Remove self-referential RKE2 checksum fallback
+4. DEV-003 — Pin IRSA webhook to a release tag; remove `|| true` from wait step
+5. DEV-004 — Remove `write-kubeconfig-mode: "0644"` from RKE2 config
+6. DEV-005 — Change `ssh_cidr_blocks` module default from `0.0.0.0/0` to `[]`
+7. DEV-006 — Pin ansible package version in userdata; remove `|| true` from install steps
+8. DEV-007 — Remove IMDSv1 curl calls from OpenVPN userdata
+9. DEV-008 — Pin cert-publisher CronJob to digest or semver tag
+10. DEV-009 — Replace `ignore_errors: yes` with `failed_when` on IRSA tasks
+11. DEV-010 — Remove `wget` + `jq` from agent node prerequisites
+12. DEV-011 — Remove `git` from server node prerequisites
+13. P-003/P-012 — Wire IRSA: fix JWKS generation, set `service-account-issuer` in RKE2 config, create cert-publisher IRSA role
+14. P-010 — Remove `allow_overwrite` from Route53 record
+15. P-014 — Set `imagePullPolicy: Always` on cert-publisher CronJob
+16. SEC-007 — Set `secret_recovery_window_days = 30` in prod tfvars

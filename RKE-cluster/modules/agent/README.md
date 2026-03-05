@@ -122,6 +122,8 @@ module "rke_agents" {
 | rke_version | RKE version to use for agent configuration | `string` | `"v1.4.0"` | no |
 | ansible_user | Ansible user to connect to the instances | `string` | `"ec2-user"` | no |
 | ansible_ssh_private_key_file | Path to the SSH private key file for Ansible | `string` | `"~/.ssh/id_rsa"` | no |
+| dockerhub_secret_arn | Secrets Manager ARN with Docker Hub credentials (`{"user":"...","token":"..."}`). Empty = skip. | `string` | `""` | no |
+| registry_mirror | Alternate registry mirror URL for `docker.io` pulls (e.g. ECR pull-through cache). Empty = skip. | `string` | `""` | no |
 
 ## Outputs
 
@@ -199,11 +201,11 @@ ansible-playbook -i inventory.ini rke-agent-playbook.yml \
 
 This module does NOT include the `ecr-credential-provider` binary (see [RKE2 discussion #7691](https://github.com/rancher/rke2/discussions/7691)).
 
-For ECR authentication options, see the main [RKE-cluster README](../../README.md#ecr-authentication), which documents:
+For registry configuration options, see the main [RKE-cluster README](../../README.md#container-registry-configuration), which documents:
 
-1. **IAM Instance Profile** (Node-Level) - Already configured via `ecr-pull-policy.json`
-2. **IRSA** (Pod-Level) - Recommended for production with OIDC setup steps
-3. **Static Credentials** - Via `registries.yaml` (not recommended)
+1. **Default** — ECR private registry auth only (no variables needed)
+2. **Docker Hub credentials** — set `dockerhub_secret_arn` to a Secrets Manager ARN containing `{"user":"...","token":"..."}`
+3. **Registry mirror** — set `registry_mirror` to redirect `docker.io` pulls through an alternate endpoint (e.g. ECR pull-through cache)
 
 ## Security
 

@@ -3,7 +3,7 @@ provider "aws" {
   alias  = "dev"
   region = "us-west-2"
   assume_role {
-    role_arn = "arn:aws:iam::REDACTED_ACCOUNT_ID:role/OrganizationAccountAccessRole"
+    role_arn = "arn:aws:iam::${var.dev_account_id}:role/OrganizationAccountAccessRole"
   }
 }
 
@@ -12,13 +12,15 @@ module "terraform_execute_dev1" {
   providers = {
     aws = aws.dev
   }
+  principal_account_id = var.mgmt_account_id
 }
+
 #mgmt
 provider "aws" {
   alias  = "mgmt"
   region = "us-west-2"
   assume_role {
-    role_arn = "arn:aws:iam::111416589270:role/OrganizationAccountAccessRole"
+    role_arn = "arn:aws:iam::${var.mgmt_org_account_id}:role/OrganizationAccountAccessRole"
   }
 }
 
@@ -27,6 +29,7 @@ module "terraform_execute_mgmt" {
   providers = {
     aws = aws.mgmt
   }
+  principal_account_id = var.mgmt_account_id
 }
 
 # network
@@ -34,7 +37,7 @@ provider "aws" {
   alias  = "network"
   region = "us-west-2"
   assume_role {
-    role_arn = "arn:aws:iam::061154959995:role/OrganizationAccountAccessRole"
+    role_arn = "arn:aws:iam::${var.network_account_id}:role/OrganizationAccountAccessRole"
   }
 }
 
@@ -43,6 +46,7 @@ module "terraform_execute_network" {
   providers = {
     aws = aws.network
   }
+  principal_account_id = var.mgmt_account_id
 }
 
 # prod
@@ -50,7 +54,7 @@ provider "aws" {
   alias  = "prod"
   region = "us-west-2"
   assume_role {
-    role_arn = "arn:aws:iam::972553824779:role/OrganizationAccountAccessRole"
+    role_arn = "arn:aws:iam::${var.prod_account_id}:role/OrganizationAccountAccessRole"
   }
 }
 
@@ -59,4 +63,5 @@ module "terraform_execute_prod" {
   providers = {
     aws = aws.prod
   }
+  principal_account_id = var.mgmt_account_id
 }

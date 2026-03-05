@@ -4,7 +4,61 @@ There are 2 Terraform modules to create an RKE2 cluster:
 - `modules/server` - RKE2 server (control plane) nodes
 - `modules/agent` - RKE2 agent (worker) nodes
 
-## ECR Authentication
+## Container Registry Configuration
+
+Each node runs an `ecr-login.sh` script (refreshed every 6 hours via cron) that writes `/etc/rancher/rke2/registries.yaml`. Three options are available and can be combined independently.
+
+### Option 1: Default — ECR auth only (no extra variables needed)
+
+The EC2 nodes have `AmazonEC2ContainerRegistryPullOnly` attached via IAM instance profile. The ECR login script authenticates to your private ECR registry automatically. No variables need to be set.
+
+### Option 2: Docker Hub credentials (avoids rate limits)
+
+Store credentials in AWS Secrets Manager as JSON with keys `user` and `token`:
+
+```bash
+aws secretsmanager create-secret \
+  --name "admin/dockerhub" \
+  --secret-string '{"user":"myuser","token":"dckr_pat_..."}' \
+  --region us-west-2
+```
+
+Then pass the ARN:
+
+```hcl
+dockerhub_secret_arn = "arn:aws:secretsmanager:us-west-2:123456789:secret:admin/dockerhub-Xxxxx"
+```
+
+The script fetches the credentials at runtime and appends an `index.docker.io` auth entry to `registries.yaml`.
+
+### Option 3: Alternate registry mirror (e.g. ECR pull-through cache)
+
+Redirects all `docker.io` pulls through a mirror endpoint:
+
+```hcl
+registry_mirror = "123456789.dkr.ecr.us-west-2.amazonaws.com/docker-hub"
+```
+
+The existing ECR token covers authentication to the pull-through cache — no Docker Hub credentials are needed when using this option.
+
+### Combining options
+
+| Scenario | Variables to set |
+|---|---|
+| ECR private registry only | _(nothing)_ |
+| Docker Hub credentials | `dockerhub_secret_arn` |
+| ECR pull-through cache mirror | `registry_mirror` |
+| Mirror + Docker Hub auth | both (though mirror alone is usually sufficient) |
+
+### Note: Bitnami images
+
+**Free Bitnami images** (e.g. `bitnami/postgresql`) are hosted on Docker Hub under the `bitnami/` namespace. These are covered by Option 2 — a Docker Hub token is all that's needed.
+
+**Paid Bitnami subscription** (hardened/FIPS images) are hosted at `registry.bitnami.com` with separate credentials. This is not currently wired up. If needed in the future, it would follow the same pattern as Option 2: store the credentials in Secrets Manager and add a `registry.bitnami.com` auth entry to `registries.yaml` alongside the existing entries. Bitnami's paid registry uses a username/password pair (not a token), both of which would be stored in the secret.
+
+These variables are set on the root `RKE/` module and propagate to both server and agent nodes automatically.
+
+## ECR Authentication (pod-level via IRSA)
 
 This cluster does NOT include the `ecr-credential-provider` binary by default (see [GitHub discussion #7691](https://github.com/rancher/rke2/discussions/7691) for why). 
 

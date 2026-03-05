@@ -83,7 +83,7 @@ resource "null_resource" "openvpn_tls_sync" {
 
       VPN_FQDN="${var.domain_name != "" ? "vpn.${var.domain_name}" : module.openvpn.openvpn_public_ip}"
       TLS_SECRET_NAME="${var.tls_secret_name}"
-      SSH_KEY="${local_file.openvpn_ssh_private_key.filename}"
+      SSH_KEY="$HOME/.ssh/openvpn-ssh-keypair.pem"
       ANSIBLE_SCRIPT="${path.module}/../ansible/setup-tls-sync.sh"
 
       echo "🔧 Running Ansible to install TLS sync on OpenVPN server: $VPN_FQDN"
@@ -112,13 +112,20 @@ resource "null_resource" "openvpn_tls_sync" {
       # Run Ansible setup with auto-approve to skip interactive prompts
       cd "$(dirname "$ANSIBLE_SCRIPT")"
       export SSH_KEY
-      AUTO_APPROVE=1 ./"$(basename "$ANSIBLE_SCRIPT")" || true
+      AUTO_APPROVE=1 ./"$(basename "$ANSIBLE_SCRIPT")" || {
+        echo ""
+        echo "⚠️  WARNING: TLS sync Ansible setup failed."
+        echo "   The OpenVPN instance is running but the cert sync cron job is NOT installed."
+        echo "   To retry manually: cd openvpn/ansible && ./setup-tls-sync.sh"
+        echo "   Or re-run: terraform apply (the null_resource is tainted and will retry)"
+        echo ""
+      }
     EOT
 
     environment = {
       VPN_FQDN        = var.domain_name != "" ? "vpn.${var.domain_name}" : module.openvpn.openvpn_public_ip
       TLS_SECRET_NAME = var.tls_secret_name
-      SSH_KEY         = local_file.openvpn_ssh_private_key.filename
+      SSH_KEY         = "$HOME/.ssh/openvpn-ssh-keypair.pem"
       AUTO_APPROVE    = "1"
       SSH_ATTEMPTS    = "6"
       SSH_WAIT        = "20"
@@ -129,7 +136,7 @@ resource "null_resource" "openvpn_tls_sync" {
 
   depends_on = [
     module.openvpn,
-    local_file.openvpn_ssh_private_key,
+    aws_key_pair.openvpn_ssh,
   ]
 
   lifecycle {

@@ -80,6 +80,18 @@ variable "rke_version" {
   default     = "v1.4.0"
 }
 
+variable "rke2_version" {
+  description = "RKE2 version to install (e.g. v1.28.8+rke2r1). Pinned to prevent silent upgrades. Check https://github.com/rancher/rke2/releases for latest."
+  type        = string
+  default     = "v1.28.8+rke2r1"
+}
+
+variable "awscli_version" {
+  description = "AWS CLI v2 version to install (e.g. 2.15.30). Pinned to prevent silent upgrades. Check https://raw.githubusercontent.com/aws/aws-cli/v2/CHANGELOG.rst for latest."
+  type        = string
+  default     = "2.15.30"
+}
+
 variable "kubernetes_version" {
   description = "Kubernetes version to install"
   type        = string
@@ -244,4 +256,16 @@ variable "irsa_namespace" {
   description = "Kubernetes namespace for the IRSA service account"
   type        = string
   default     = "default"
+}
+
+variable "dockerhub_secret_arn" {
+  description = "ARN of Secrets Manager secret containing Docker Hub credentials ({\"user\":\"...\",\"token\":\"...\"}). Leave empty to skip Docker Hub auth."
+  type        = string
+  default     = ""
+}
+
+variable "registry_mirror" {
+  description = "Optional alternate registry mirror URL (e.g. ECR pull-through cache endpoint). When set, all docker.io pulls are redirected through this registry."
+  type        = string
+  default     = ""
 } 

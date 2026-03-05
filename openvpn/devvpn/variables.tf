@@ -100,3 +100,9 @@ variable "vpc_endpoint_sg_id" {
   type        = string
   default     = ""
 }
+
+variable "secret_recovery_window_days" {
+  description = "Secrets Manager recovery window in days. Use 0 for dev (immediate deletion on destroy), 30 for production."
+  type        = number
+  default     = 0
+}

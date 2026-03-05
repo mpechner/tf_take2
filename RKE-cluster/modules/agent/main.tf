@@ -37,6 +37,8 @@ resource "local_file" "ansible_playbook" {
     ansible_ssh_private_key_file = var.ansible_ssh_private_key_file
     docker_version               = var.docker_version
     rke_version                  = var.rke_version
+    rke2_version                 = var.rke2_version
+    awscli_version               = var.awscli_version
     server_endpoint              = var.server_endpoint
   })
   filename = "${path.module}/ansible/rke-agent-playbook.yml"
@@ -94,8 +96,12 @@ resource "null_resource" "ansible_provision" {
     cluster_name           = var.cluster_name
     docker_version         = var.docker_version
     rke_version            = var.rke_version
+    rke2_version           = var.rke2_version
+    awscli_version         = var.awscli_version
     instance_ip            = var.agent_instance_ips[count.index]
     playbook_template_hash = filesha256("${path.module}/templates/ansible-playbook.yml.tftpl")
+    dockerhub_secret_arn   = var.dockerhub_secret_arn
+    registry_mirror        = var.registry_mirror
     # Store connection info for destroy provisioner
     ssh_user     = var.ansible_user
     ssh_key_file = var.ansible_ssh_private_key_file
@@ -123,7 +129,7 @@ resource "null_resource" "ansible_provision" {
       "ls -la",
       "for a in 1 2 3 4 5; do ansible-galaxy collection install -r requirements.yml --force && break; [ $a -eq 5 ] && { echo 'Ansible Galaxy unavailable after 5 attempts (e.g. 502). Re-run apply later.'; exit 1; }; echo \"Galaxy attempt $a failed, retrying in 15s...\"; sleep 15; done",
       "test -f rke-agent-playbook.yml || { echo 'missing rke-agent-playbook.yml in $(pwd)'; exit 1; }",
-      "ANSIBLE_PYTHON_INTERPRETER=/usr/bin/python3 ansible-playbook -i 'localhost,' -c local rke-agent-playbook.yml --extra-vars 'cluster_name=${var.cluster_name} region=${var.aws_region} ansible_user=${var.ansible_user} server_endpoint=${var.server_endpoint}'"
+      "ANSIBLE_PYTHON_INTERPRETER=/usr/bin/python3 ansible-playbook -i 'localhost,' -c local rke-agent-playbook.yml --extra-vars 'cluster_name=${var.cluster_name} region=${var.aws_region} ansible_user=${var.ansible_user} server_endpoint=${var.server_endpoint} dockerhub_secret_arn=${var.dockerhub_secret_arn} registry_mirror=${var.registry_mirror}'"
     ]
 
     connection {

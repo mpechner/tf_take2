@@ -87,3 +87,9 @@ variable "single_nat_gateway" {
   type    = bool
   default = true
 }
+
+variable "alert_email" {
+  description = "Email for VPC flow log alerts. Leave empty to skip email subscription."
+  type        = string
+  default     = ""
+}

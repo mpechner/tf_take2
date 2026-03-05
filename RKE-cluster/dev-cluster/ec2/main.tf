@@ -17,6 +17,9 @@ module "rke-nodes" {
   # Covers cert-manager DNS-01 (vpn zone) and external-dns (cluster zone).
   route53_hosted_zone_ids = var.route53_hosted_zone_ids
 
-  # Scope Secrets Manager write to the openvpn cert publisher path.
-  openvpn_secret_prefix = "openvpn/"
+  # Scope Secrets Manager permissions to exact secret names used by this deployment.
+  openvpn_secret_prefix  = "openvpn/"
+  rke_ssh_secret_name    = "rke-ssh"
+  rke2_token_secret_name = "${local.cluster_name}-rke2-token"
+  dockerhub_secret_arn   = var.dockerhub_secret_arn
 }

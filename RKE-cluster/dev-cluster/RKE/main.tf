@@ -16,14 +16,18 @@ resource "random_password" "rke2_token" {
 resource "aws_secretsmanager_secret" "rke2_token" {
   name = "${local.cluster_name}-rke2-token"
 
-  # Force immediate deletion instead of 30-day recovery window
-  # This allows terraform destroy/apply cycles without waiting
-  recovery_window_in_days = 0
+  # Force immediate deletion in dev (0); set to 30 for production via secret_recovery_window_days
+  recovery_window_in_days = var.secret_recovery_window_days
 }
 
 resource "aws_secretsmanager_secret_version" "rke2_token" {
   secret_id     = aws_secretsmanager_secret.rke2_token.id
   secret_string = random_password.rke2_token.result
+
+  # Never overwrite the token once written — same reason as above.
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
 }
 
 module "rke-server" {
@@ -36,6 +40,8 @@ module "rke-server" {
   server_instance_ips          = data.terraform_remote_state.ec2.outputs.server_instance_private_ips
   ansible_user                 = "ubuntu"
   ansible_ssh_private_key_file = "~/.ssh/rke-key"
+  dockerhub_secret_arn         = var.dockerhub_secret_arn
+  registry_mirror              = var.registry_mirror
 
   # Enable etcd backups to S3
   etcd_backup_enabled = true
@@ -56,6 +62,8 @@ module "rke-agent" {
   ansible_user                 = "ubuntu"
   ansible_ssh_private_key_file = "~/.ssh/rke-key"
   server_endpoint              = element(data.terraform_remote_state.ec2.outputs.server_instance_private_ips, 0)
+  dockerhub_secret_arn         = var.dockerhub_secret_arn
+  registry_mirror              = var.registry_mirror
   depends_on                   = [aws_secretsmanager_secret_version.rke2_token, module.rke-server]
 
 }

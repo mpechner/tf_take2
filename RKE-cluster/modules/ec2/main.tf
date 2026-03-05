@@ -101,7 +101,8 @@ resource "aws_instance" "server_rke_nodes" {
     volume_size           = 40
     volume_type           = "gp3"
     delete_on_termination = true
-    encrypted             = false
+    encrypted             = var.ebs_encrypted
+    kms_key_id            = local.ebs_kms_key_id
   }
 
   # Require IMDSv2 for security (disables IMDSv1)
@@ -139,7 +140,8 @@ resource "aws_instance" "agent_rke_nodes" {
     volume_size           = 40
     volume_type           = "gp3"
     delete_on_termination = true
-    encrypted             = false
+    encrypted             = var.ebs_encrypted
+    kms_key_id            = local.ebs_kms_key_id
   }
 
   # Require IMDSv2 for security (disables IMDSv1)
@@ -197,14 +199,24 @@ resource "aws_iam_role_policy" "secretsmanager_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        # Read any secret — allows nodes/pods to consume secrets generically.
-        Sid    = "ReadAny"
+        # Read scoped to exactly the secrets nodes need:
+        # - openvpn/* : cert publisher CronJob reads the TLS cert
+        # - rke_ssh_secret_name : RKE SSH keypair
+        # - rke2_token_secret_name : RKE2 cluster join token
+        Sid    = "ReadScoped"
         Effect = "Allow"
         Action = [
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret",
         ]
-        Resource = "*"
+        Resource = concat(
+          [
+            "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.openvpn_secret_prefix}*",
+            "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.rke_ssh_secret_name}*",
+            "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.rke2_token_secret_name}*",
+          ],
+          var.dockerhub_secret_arn != "" ? [var.dockerhub_secret_arn] : [],
+        )
       },
       {
         # Write access scoped to the openvpn secret prefix (cert publisher CronJob).
@@ -240,14 +252,15 @@ resource "aws_iam_role_policy" "route53_access" {
         Resource = "*"
       },
       {
-        # Record mutations scoped to specific hosted zones when provided; falls back to * if empty.
+        # Record mutations scoped to specific hosted zones — required, no wildcard fallback.
+        # Pass all zones cert-manager (DNS-01) and external-dns need to modify.
         Sid    = "ChangeRecords"
         Effect = "Allow"
         Action = [
           "route53:ChangeResourceRecordSets",
           "route53:ListResourceRecordSets",
         ]
-        Resource = length(var.route53_hosted_zone_ids) > 0 ? [for id in var.route53_hosted_zone_ids : "arn:aws:route53:::hostedzone/${id}"] : ["*"]
+        Resource = [for id in var.route53_hosted_zone_ids : "arn:aws:route53:::hostedzone/${id}"]
       },
     ]
   })

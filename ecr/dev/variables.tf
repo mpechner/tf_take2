@@ -24,7 +24,7 @@ variable "repository_names" {
 variable "additional_push_account_ids" {
   description = "Additional AWS account IDs allowed to push images"
   type        = list(string)
-  default     = ["REDACTED_ACCOUNT_ID"]
+  default     = []
 }
 
 variable "image_expiration_days" {

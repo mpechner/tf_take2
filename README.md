@@ -63,14 +63,6 @@ Each directory has a `terraform.tfvars.example` as a starting point where availa
 | `route53/dns-security` | `terraform.tfvars` | `aws_account_id`, `network_account_id` |
 | `vpc/dev` | `terraform.tfvars` | `account_id` |
 
-**Shell scripts** (`scripts/`) require `AWS_ACCOUNT_ID` set in the environment:
-```bash
-export AWS_ACCOUNT_ID=<your-account-id>
-```
-Or inline: `AWS_ACCOUNT_ID=<your-account-id> ./scripts/get-openvpn-ssh-key.sh`
-
-After `terraform apply` on `openvpn/devvpn` and `RKE-cluster/dev-cluster/ec2`, the outputs include the exact commands with the account ID already substituted — copy and paste directly.
-
 # Bootstrap
 
 ## Step 1: Organization Setup
@@ -82,7 +74,25 @@ terraform apply
 cd ..
 ```
 
-## Step 2: S3 Buckets
+## Step 2: Create SSH Key Secrets (REQUIRED)
+
+After the Organization is set up, create the SSH key secrets that will be used throughout the deployment. These secrets persist across destroy/rebuild cycles and are **not** managed by Terraform (they survive `terraform destroy`).
+
+**Create OpenVPN SSH key pair** (creates secret `openvpn-ssh` in Secrets Manager and saves `~/.ssh/openvpn-ssh-keypair.pem`):
+```bash
+export AWS_ACCOUNT_ID=<your-dev-account-id>
+./scripts/create-openvpn-ssh-key.sh
+```
+
+**Create RKE SSH key pair** (creates secret `rke-ssh` in Secrets Manager and saves `~/.ssh/rke-key`):
+```bash
+export AWS_ACCOUNT_ID=<your-dev-account-id>
+./scripts/create-rke-ssh-key.sh
+```
+
+Both scripts are idempotent — if the secrets already exist, they fetch the existing keys without overwriting. Pass `--force` to regenerate if needed.
+
+## Step 3: S3 Buckets
 Create required S3 buckets for logging and backups.
 ```bash
 cd buckets/dev-account
@@ -95,7 +105,7 @@ This creates:
 - `mikey-s3-servicelogging-dev-us-west-2` - S3 access logs bucket
 - `mikey-dev-rke-etcd-backups` - RKE etcd backups bucket
 
-## Step 3: VPC Infrastructure
+## Step 4: VPC Infrastructure
 
 The VPC is deployed from `VPC/` (not `VPC/dev/`). This uses an **S3 backend** so the VPC state is shared and can be referenced by other components (like OpenVPN).
 
@@ -110,12 +120,14 @@ cd ..
 
 **Why not `VPC/dev/`?** That directory uses a local state file (no backend), which means only your machine can access it. OpenVPN reads the VPC ID from S3 remote state, so you must use `VPC/` for shared infrastructure.
 
-## Step 4: VPN
+## Step 5: VPN
+
 ```bash
 cd openvpn/devvpn
 terraform init
 terraform apply
 ```
+
 The output will provide important information for connecting. Since the security group is using my comcast public IP feel safe with defaults. BUT WE ALL KNOW THIS IS BAD! The default password is not set.
 ```
 vpn_connection_info = {
@@ -131,16 +143,6 @@ vpn_connection_info = {
 - This subnet is added to the RKE security groups to allow kubectl/k9s access from VPN-connected clients
 - If you change the VPN IP Network in the OpenVPN admin panel, you must also update the `cluster_cidr_blocks` in `RKE-cluster/dev-cluster/RKE/main.tf`
 
-Get the OpenVPN SSH key (saved to `~/.ssh/openvpn-ssh-keypair.pem`). The `terraform apply` output includes the exact command — copy it directly:
-
-```
-get_ssh_key_command = "AWS_ACCOUNT_ID=<your-account-id> ./../../scripts/get-openvpn-ssh-key.sh"
-```
-
-Copy and run that line verbatim. Or run manually:
-```bash
-AWS_ACCOUNT_ID=<your-account-id> ./scripts/get-openvpn-ssh-key.sh
-```
 
 **Important: First, update the OS and reboot (before setting password):**
 ```bash
@@ -200,7 +202,7 @@ echo 'push "dhcp-option DNS 8.8.8.8"'   >> /tmp/dns.txt
 
 See `openvpn/README.md` for more detail and notes on `vpn.server.config_text`.
 
-## Step 5: Create ECR repository
+## Step 6: Create ECR repository
 
 Create the ECR repository (e.g. `vpncertrotate`) used for the OpenVPN cert rotation Lambda image and other container images. Configure `ecr/dev/variables.tf` or `terraform.tfvars` (copy from `terraform.tfvars.example`) with your `account_id`, `org_id`, and `repository_names`.
 
@@ -215,38 +217,17 @@ cd ../..
 
 This creates the ECR repo(s) with org-wide read, dev (and configured) write, 60-day image expiry, and KMS encryption. Use the output `repository_urls` when building and pushing images (e.g. `openvpncert/lambda` with `make push`).
 
-## Step 6: Bring up the EC2 instances
+## Step 7: Bring up the EC2 instances
+
 ```bash
 cd RKE-cluster/dev-cluster/ec2
 terraform apply
 ```
 
-**IMPORTANT - SSH Key Setup Required:**
-
-Before proceeding to Step 7, you MUST copy the RKE SSH private key. The `terraform apply` output includes the exact command with your account ID already filled in — copy it directly from the `next_steps` output:
-
-```
-next_steps = <<EOT
-  ✓ All EC2 instances are ready!
-
-  Next steps:
-  1. Get the RKE SSH key (saved to ~/.ssh/rke-key):
-     AWS_ACCOUNT_ID=123456789012 ../../../scripts/get-rke-ssh-key.sh
-  ...
-EOT
-```
-
-Copy and run that line verbatim. Or run manually:
-```bash
-AWS_ACCOUNT_ID=<your-account-id> ./scripts/get-rke-ssh-key.sh
-```
-
-**Without this SSH key, Step 7 will fail with authentication errors!**
-
 **Wait for EC2 Status Checks:**
 Terraform will automatically wait for all EC2 instances to pass their system and instance status checks before completing. This typically takes 2-3 minutes per instance.
 
-## Step 7: Bring up RKE server/agents
+## Step 8: Bring up RKE server/agents
 Make sure the ec2 nodes are fully up.
 You must be connected to the VPN now.
 ```bash
@@ -267,7 +248,7 @@ Terraform will automatically verify:
 
 This process typically takes 5-10 minutes.
 
-## Step 8: Configure kubectl Access
+## Step 9: Configure kubectl Access
 
 Before deploying applications, you need to configure kubectl access to the RKE cluster.
 
@@ -291,7 +272,7 @@ kubectl config use-context dev-rke2
 kubectl get nodes
 ```
 
-## Step 9: Deploy Infrastructure Components
+## Step 10: Deploy Infrastructure Components
 
 Deploy the core Kubernetes infrastructure (Traefik, External-DNS, Cert-Manager, AWS Load Balancer Controller).
 
@@ -309,7 +290,7 @@ This deploys:
 
 Wait for all infrastructure components to be ready (2-3 minutes).
 
-## Step 10: Build OpenVPN Cert Publisher Docker Image (REQUIRED if using OpenVPN certs)
+## Step 11: Build OpenVPN Cert Publisher Docker Image (REQUIRED if using OpenVPN certs)
 
 If you plan to use the **OpenVPN TLS Certificate Pipeline** (deployed in Step 11), you MUST build and push the publisher Docker image FIRST.
 
@@ -325,7 +306,7 @@ See `deployments/dev-cluster/2-applications/README.md` § "Deploying the OpenVPN
 
 ---
 
-## Step 11: Deploy Applications
+## Step 12: Deploy Applications
 
 Now deploy applications (Rancher, Nginx sample, Traefik Dashboard, and optionally OpenVPN cert pipeline).
 
@@ -339,7 +320,7 @@ This deploys:
 - **Rancher** at `https://rancher.dev.foobar.support` (Kubernetes management UI). **Initial login:** username `admin`, password `admin` (change on first use).
 - **Sample nginx site** at `https://nginx.dev.foobar.support`
 - **Traefik dashboard** at `https://traefik.dev.foobar.support/dashboard`
-- **OpenVPN TLS Certificate Pipeline** (optional) - Automated Let's Encrypt certificate for VPN + CronJob (requires Step 10 above)
+- **OpenVPN TLS Certificate Pipeline** (optional) - Automated Let's Encrypt certificate for VPN + CronJob (requires Step 11 above)
 
 **Note:** All three web apps are on the same public NLB; no VPN required once DNS has synced. See `deployments/dev-cluster/ADDING-NEW-APP.md` to add more apps.
 
@@ -371,6 +352,32 @@ terraform destroy
 ```
 
 If you skip the script, `terraform destroy` will detect existing Traefik NLBs and **fail with a copy-pastable command** to run the script, then you run destroy again. See `deployments/dev-cluster/1-infrastructure/README.md` and `scripts/README.md` for details.
+
+**SSH key secrets are not managed by Terraform and are NOT deleted on `terraform destroy`.** This is intentional — the secrets survive a destroy/rebuild cycle so the same keys can be reused. To fully decommission the environment, delete them manually after all other resources are destroyed:
+
+```bash
+export AWS_ACCOUNT_ID=364082771643
+
+# Assume terraform-execute role
+TEMP_CREDS=$(aws sts assume-role \
+  --role-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:role/terraform-execute" \
+  --role-session-name "cleanup-ssh-secrets" \
+  --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+  --output text)
+export AWS_ACCESS_KEY_ID=$(echo $TEMP_CREDS | awk '{print $1}')
+export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_CREDS | awk '{print $2}')
+export AWS_SESSION_TOKEN=$(echo $TEMP_CREDS | awk '{print $3}')
+
+aws secretsmanager delete-secret \
+  --secret-id openvpn-ssh \
+  --force-delete-without-recovery \
+  --region us-west-2
+
+aws secretsmanager delete-secret \
+  --secret-id rke-ssh \
+  --force-delete-without-recovery \
+  --region us-west-2
+```
 
 ## Optional: IRSA (IAM Roles for Service Accounts)
 

@@ -60,7 +60,17 @@ resource "null_resource" "patch_node_provider_ids" {
   }
 
   provisioner "local-exec" {
-    command = "kubectl patch node ${each.key} -p '{\"spec\":{\"providerID\":\"${each.value}\"}}'"
+    command = <<-EOT
+      CURRENT=$(kubectl get node ${each.key} -o jsonpath='{.spec.providerID}' 2>/dev/null || echo "")
+      DESIRED="${each.value}"
+      if [ "$CURRENT" = "$DESIRED" ]; then
+        echo "Node ${each.key} providerID already set to $DESIRED, skipping."
+      elif [ -z "$CURRENT" ]; then
+        kubectl patch node ${each.key} -p "{\"spec\":{\"providerID\":\"$DESIRED\"}}"
+      else
+        echo "Node ${each.key} providerID already set to $CURRENT (wanted $DESIRED). Cannot change non-empty providerID; skipping."
+      fi
+    EOT
   }
 
   provisioner "local-exec" {

@@ -40,9 +40,11 @@ if [ ! -f "${SSH_KEY}" ]; then
   exit 1
 fi
 
-# Copy kubeconfig from server
+# Copy kubeconfig from server (file is root-owned, so copy via sudo to a temp location first)
 echo "Copying kubeconfig from server..."
-scp -i "${SSH_KEY}" ubuntu@${SERVER_IP}:/etc/rancher/rke2/rke2.yaml "${KUBECONFIG_FILE}"
+ssh -i "${SSH_KEY}" ubuntu@${SERVER_IP} "sudo cp /etc/rancher/rke2/rke2.yaml /tmp/rke2.yaml && sudo chmod 644 /tmp/rke2.yaml"
+scp -i "${SSH_KEY}" ubuntu@${SERVER_IP}:/tmp/rke2.yaml "${KUBECONFIG_FILE}"
+ssh -i "${SSH_KEY}" ubuntu@${SERVER_IP} "sudo rm -f /tmp/rke2.yaml"
 
 # Update server URL
 echo "Updating server URL..."

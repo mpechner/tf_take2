@@ -8,29 +8,27 @@
     region: "${aws_region}"
     docker_version: "${docker_version}"
     rke_version: "${rke_version}"
+    rke2_version: "${rke2_version}"
+    awscli_version: "${awscli_version}"
     kubernetes_version: "${kubernetes_version}"
     etcd_backup_enabled: "${etcd_backup_enabled}"
     etcd_backup_retention: "${etcd_backup_retention}"
     ansible_user: "${ansible_user}"
 
   tasks:
-    - name: Update apt cache and upgrade packages
+    - name: Update apt cache
       apt:
         update_cache: yes
-        upgrade: dist
+        upgrade: safe
 
     - name: Install required packages
       apt:
         name:
-          - docker.io
-          - wget
           - curl
-          - git
           - unzip
           - python3
           - python3-pip
           - python3-venv
-          - lvm2
           - chrony
         state: present
         update_cache: yes
@@ -42,47 +40,26 @@
 
     - name: Install AWS CLI v2
       shell: |
-        if ! command -v aws &>/dev/null || ! aws --version 2>&1 | grep -q "aws-cli/2"; then
-          cd /tmp
-          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        INSTALLED_VERSION=$(aws --version 2>&1 | grep -oP 'aws-cli/\K[0-9.]+' || echo "none")
+        if [ "$INSTALLED_VERSION" != "${awscli_version}" ]; then
+          WORK_DIR=$(mktemp -d)
+          trap "rm -rf '$WORK_DIR'" EXIT
+          cd "$WORK_DIR"
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${awscli_version}.zip"        -o "awscliv2.zip"
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${awscli_version}.zip.sha256" -o "awscliv2.zip.sha256"
+          sha256sum --check awscliv2.zip.sha256
           unzip -q -o awscliv2.zip
           ./aws/install --update
-          rm -rf awscliv2.zip aws
         fi
       args:
         creates: /usr/local/bin/aws
-
-    - name: Start and enable Docker service
-      systemd:
-        name: docker
-        state: started
-        enabled: yes
 
     - name: Add user to docker group
       user:
         name: "{{ ansible_user }}"
         groups: docker
         append: yes
-
-    - name: Configure Docker daemon
-      copy:
-        dest: /etc/docker/daemon.json
-        content: |
-          {
-            "exec-opts": ["native.cgroupdriver=systemd"],
-            "log-driver": "json-file",
-            "log-opts": {
-              "max-size": "100m"
-            },
-            "storage-driver": "overlay2"
-          }
-      notify: restart docker
-
-    - name: Install Docker Compose
-      get_url:
-        url: "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-{{ ansible_system | lower }}-{{ ansible_architecture }}"
-        dest: /usr/local/bin/docker-compose
-        mode: '0755'
+      when: ansible_facts.packages['docker.io'] is defined
 
     - name: Configure system limits
       lineinfile:
@@ -120,7 +97,17 @@
 
     - name: Install RKE2 server
       shell: |
-        curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=server sh -
+        WORK_DIR=$(mktemp -d)
+        trap "rm -rf '$WORK_DIR'" EXIT
+        cd "$WORK_DIR"
+        curl -fsSL "https://github.com/rancher/rke2/releases/download/${rke2_version}/sha256sum-amd64.txt" -o sha256sum-amd64.txt
+        curl -fsSL https://get.rke2.io -o install.sh
+        EXPECTED=$(grep "install.sh" sha256sum-amd64.txt | awk '{print $1}' || true)
+        if [ -n "$EXPECTED" ]; then
+          echo "$EXPECTED  install.sh" | sha256sum --check || { echo "RKE2 installer checksum verification failed"; exit 1; }
+        fi
+        chmod 700 install.sh
+        INSTALL_RKE2_TYPE=server INSTALL_RKE2_VERSION="${rke2_version}" sh install.sh
       args:
         creates: /usr/local/bin/rke2
 
@@ -146,32 +133,116 @@
         dest: /usr/local/bin/ecr-login.sh
         content: |
           #!/bin/bash
-          # Refresh ECR credentials for RKE2/containerd
+          LOG="/var/log/ecr-login.log"
+          log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
+
+          log "=== ecr-login.sh starting ==="
+
           REGION="{{ region }}"
-          ACCOUNT="${ aws_account_id }"
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>&1)
+          if [ $? -ne 0 ]; then
+            log "ERROR: aws sts get-caller-identity failed: $ACCOUNT"
+            exit 1
+          fi
+          log "AWS account: $ACCOUNT"
+
           REGISTRY="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
-          
-          # Get ECR login token
-          TOKEN=$(aws ecr get-login-password --region $REGION)
-          
-          # Write registries.yaml
-          cat > /etc/rancher/rke2/registries.yaml <<EOF
+          TOKEN=$(aws ecr get-login-password --region "$REGION" 2>/dev/null)
+          if [ $? -ne 0 ] || [ -z "$TOKEN" ]; then
+            log "ERROR: aws ecr get-login-password failed"
+            exit 1
+          fi
+          log "ECR token obtained for $REGISTRY"
+
+          MIRROR="{{ registry_mirror | default('') }}"
+          if [ -n "$MIRROR" ]; then
+            cat > /etc/rancher/rke2/registries.yaml <<EOF
+          mirrors:
+            "docker.io":
+              endpoint:
+                - "https://$MIRROR"
           configs:
             "$REGISTRY":
               auth:
                 username: AWS
                 password: "$TOKEN"
           EOF
-          
+          else
+            cat > /etc/rancher/rke2/registries.yaml <<EOF
+          configs:
+            "$REGISTRY":
+              auth:
+                username: AWS
+                password: "$TOKEN"
+          EOF
+          fi
+          log "Base registries.yaml written (ECR)"
+
+          DH_ARN="{{ dockerhub_secret_arn | default('') }}"
+          if [ -n "$DH_ARN" ]; then
+            log "Docker Hub secret ARN configured: $DH_ARN"
+            DH_JSON=""
+            for attempt in 1 2 3; do
+              DH_JSON=$(aws secretsmanager get-secret-value \
+                --secret-id "$DH_ARN" \
+                --region "$REGION" \
+                --query SecretString --output text 2>&1)
+              if [ $? -eq 0 ] && [ -n "$DH_JSON" ]; then
+                break
+              fi
+              log "WARNING: Secrets Manager fetch attempt $attempt failed: $DH_JSON"
+              DH_JSON=""
+              sleep 5
+            done
+
+            if [ -z "$DH_JSON" ]; then
+              log "ERROR: Could not fetch Docker Hub secret after 3 attempts"
+            else
+              log "Docker Hub secret fetched from Secrets Manager"
+              DH_USER=$(echo "$DH_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['user'])" 2>&1)
+              PY_RC=$?
+              DH_TOKEN=$(echo "$DH_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>&1)
+              PY2_RC=$?
+
+              if [ $PY_RC -ne 0 ] || [ -z "$DH_USER" ]; then
+                log "ERROR: Failed to parse 'user' from secret JSON (rc=$PY_RC): $DH_USER"
+              elif [ $PY2_RC -ne 0 ] || [ -z "$DH_TOKEN" ]; then
+                log "ERROR: Failed to parse 'token' from secret JSON (rc=$PY2_RC)"
+              else
+                log "Docker Hub user: $DH_USER — validating credentials..."
+                CURL_OUT=$(curl -sf -u "$DH_USER:$DH_TOKEN" \
+                  "https://auth.docker.io/token?service=registry.docker.io&scope=repository:rancher/rke2-runtime:pull" 2>&1)
+                CURL_RC=$?
+                if [ $CURL_RC -ne 0 ]; then
+                  log "WARNING: Docker Hub credential validation failed (rc=$CURL_RC): $CURL_OUT"
+                  log "Skipping Docker Hub auth to avoid breaking image pulls"
+                else
+                  cat >> /etc/rancher/rke2/registries.yaml <<EOF
+            "docker.io":
+              auth:
+                username: "$DH_USER"
+                password: "$DH_TOKEN"
+          EOF
+                  log "Docker Hub credentials validated and added to registries.yaml"
+                fi
+              fi
+            fi
+          else
+            log "No Docker Hub secret ARN configured — skipping"
+          fi
+
           chmod 600 /etc/rancher/rke2/registries.yaml
-          
-          # Restart RKE2 to pick up new credentials (only if config changed)
-          # systemctl restart rke2-server
+          log "registries.yaml keys: $(grep -E '^\s{2}\S' /etc/rancher/rke2/registries.yaml | tr -d ' \":')"
+          log "=== ecr-login.sh complete ==="
         mode: '0755'
 
     - name: Run ECR login script initially
       command: /usr/local/bin/ecr-login.sh
-      ignore_errors: yes
+      register: ecr_login_result
+
+    - name: Show ECR login script output
+      debug:
+        var: ecr_login_result.stdout_lines
 
     - name: Add ECR credential refresh cron job (runs every 6 hours)
       cron:
@@ -181,25 +252,82 @@
         job: "/usr/local/bin/ecr-login.sh >> /var/log/ecr-login.log 2>&1"
         user: root
 
-    - name: Write RKE2 server config
+    - name: Check if RKE2 config already exists
+      stat:
+        path: /etc/rancher/rke2/config.yaml
+      register: rke2_config_stat
+
+    - name: Check if rke2-server is currently active
+      command: systemctl is-active rke2-server
+      register: rke2_active_check
+      changed_when: false
+      failed_when: false
+
+    - name: Stop rke2-server if config exists but service is dead
+      systemd:
+        name: rke2-server
+        state: stopped
+      failed_when: false
+      when: rke2_config_stat.stat.exists and rke2_active_check.rc | int != 0
+
+    - name: Wipe stale RKE2 server state (preserves agent/images for fast re-bootstrap)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/rancher/rke2/server/db/etcd
+        - /var/lib/rancher/rke2/server/tls
+        - /var/lib/rancher/rke2/server/cred
+        - /var/lib/rancher/rke2/server/manifests
+        - /var/lib/rancher/rke2/agent/containerd
+        - /var/lib/rancher/rke2/agent/etc
+        - /var/lib/rancher/rke2/agent/pod-manifests
+        - /etc/rancher/rke2/config.yaml
+      when: rke2_config_stat.stat.exists and rke2_active_check.rc | int != 0
+
+    - name: Re-check RKE2 config stat after potential wipe
+      stat:
+        path: /etc/rancher/rke2/config.yaml
+      register: rke2_config_stat
+
+    - name: Get EC2 instance ID from metadata (IMDSv2)
+      shell: |
+        TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+        curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id
+      register: ec2_instance_id
+      when: not rke2_config_stat.stat.exists
+
+    - name: Get EC2 availability zone from metadata (IMDSv2)
+      shell: |
+        TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+        curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone
+      register: ec2_az
+      when: not rke2_config_stat.stat.exists
+
+    - name: Write RKE2 server config (only on first provisioning)
       copy:
         dest: /etc/rancher/rke2/config.yaml
         content: |
           token: {{ rke2_token.stdout | trim }}
-          write-kubeconfig-mode: "0644"
           tls-san:
             - "{{ ansible_default_ipv4.address }}"
             - "ip-{{ ansible_default_ipv4.address | replace('.', '-') }}.{{ region }}.compute.internal"
           cluster-cidr: "10.42.0.0/16"
           service-cidr: "10.43.0.0/16"
           cni: "canal"
-          cloud-provider-name: "aws"
-          %{~ if length(server_instance_ips) > 1 }
-          {% if ansible_default_ipv4.address != '${server_instance_ips[0]}' %}
-          server: https://ip-${replace(server_instance_ips[0], ".", "-")}.${aws_region}.compute.internal:9345
-          {% endif %}
-          %{~ endif }
-        mode: '0644'
+          kubelet-arg:
+            - "provider-id=aws:///{{ ec2_az.stdout }}/{{ ec2_instance_id.stdout }}"
+        mode: '0600'
+      when: not rke2_config_stat.stat.exists
+
+    # Additional servers must join via the first server's supervisor port.
+    # This appends "server: ..." only on nodes that are not the first server.
+    - name: Add server join URL to RKE2 config (additional servers only)
+      lineinfile:
+        path: /etc/rancher/rke2/config.yaml
+        line: 'server: https://ip-${replace(server_instance_ips[0], ".", "-")}.${aws_region}.compute.internal:9345'
+        insertafter: EOF
+      when: ansible_default_ipv4.address != '${server_instance_ips[0]}' and not rke2_config_stat.stat.exists
 
     # Additional servers must wait for the first server to be listening on 9345 before starting rke2-server
     - name: Wait for first server join port (additional nodes only)
@@ -210,6 +338,16 @@
         timeout: 600
       when: ansible_default_ipv4.address != '${server_instance_ips[0]}'
 
+    # Also wait for the first server's API to be up before joining — etcd bootstrapping
+    # can take 60-90 seconds after port 9345 opens; joining too early causes auth failures.
+    - name: Wait for first server API port before joining (additional nodes only)
+      wait_for:
+        host: "${server_instance_ips[0]}"
+        port: 6443
+        delay: 5
+        timeout: 300
+      when: ansible_default_ipv4.address != '${server_instance_ips[0]}'
+
     - name: Enable and start rke2-server
       systemd:
         name: rke2-server
@@ -217,6 +355,7 @@
         state: started
         daemon_reload: yes
       register: rke2_server_start
+      ignore_errors: yes
 
     - name: Show rke2-server journal when start fails (for debugging)
       command: journalctl -u rke2-server -n 80 --no-pager
@@ -234,6 +373,44 @@
       fail:
         msg: "rke2-server failed to start. Check journal output above or run on node: journalctl -u rke2-server -n 100 --no-pager"
       when: rke2_server_start is failed
+
+    - name: Wait 30s for rke2-server to survive initial etcd bootstrap
+      shell: sleep 30
+      changed_when: false
+      when: not rke2_server_start is failed
+
+    - name: Verify rke2-server is still active after 30s stabilization
+      command: systemctl is-active rke2-server
+      register: rke2_post_start_check
+      changed_when: false
+      failed_when: false
+      when: not rke2_server_start is failed
+
+    - name: Show journal if rke2-server crashed after initial start
+      command: journalctl -u rke2-server -n 100 --no-pager
+      register: rke2_crash_journal
+      when:
+        - not rke2_server_start is failed
+        - rke2_post_start_check.rc is defined
+        - rke2_post_start_check.rc | int != 0
+      changed_when: false
+      failed_when: false
+
+    - name: Emit crash journal
+      debug:
+        msg: "{{ rke2_crash_journal.stdout_lines | default([]) }}"
+      when:
+        - not rke2_server_start is failed
+        - rke2_post_start_check.rc is defined
+        - rke2_post_start_check.rc | int != 0
+
+    - name: Fail if rke2-server crashed within 30s of starting
+      fail:
+        msg: "rke2-server started but crashed within 30 seconds. Journal output above. This usually means etcd failed to bootstrap — check for port conflicts, disk issues, or insufficient memory."
+      when:
+        - not rke2_server_start is failed
+        - rke2_post_start_check.rc is defined
+        - rke2_post_start_check.rc | int != 0
 
     - name: Wait for RKE2 kubeconfig to be generated
       wait_for:
@@ -404,11 +581,6 @@
       meta: end_play
 
   handlers:
-    - name: restart docker
-      systemd:
-        name: docker
-        state: restarted
-
     - name: reload systemd
       systemd:
         daemon_reload: yes

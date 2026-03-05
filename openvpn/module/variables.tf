@@ -83,3 +83,9 @@ variable "tls_sync_ansible_script" {
   type        = string
   default     = ""
 }
+
+variable "kms_key_arn" {
+  description = "ARN of the KMS customer-managed key used to encrypt the Secrets Manager secrets. When provided, the OpenVPN instance role's kms:Decrypt permission is scoped to this key only. Leave empty (default) if secrets use AWS-managed encryption (no CMK)."
+  type        = string
+  default     = ""
+}

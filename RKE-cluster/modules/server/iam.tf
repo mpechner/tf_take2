@@ -52,6 +52,18 @@ resource "aws_iam_role_policy" "rke_server_etcd_backup" {
   })
 }
 
+# Docker Hub secret read permission (only when dockerhub_secret_arn is provided)
+resource "aws_iam_role_policy" "rke_server_dockerhub_secret" {
+  count = var.dockerhub_secret_arn != "" ? 1 : 0
+
+  name = "${var.cluster_name}-rke-server-dockerhub-secret-policy"
+  role = aws_iam_role.rke_server.id
+
+  policy = templatefile("${path.module}/policies/dockerhub-secret-policy.json.tftpl", {
+    secret_arn = var.dockerhub_secret_arn
+  })
+}
+
 # OIDC Provider for IRSA (if not already created)
 resource "aws_iam_openid_connect_provider" "rke_oidc" {
   count = var.enable_irsa ? 1 : 0

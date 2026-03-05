@@ -381,16 +381,12 @@ The real complexity isn't in the code — it's in the permission layering (KMS e
 
 ## A Note on How This Was Written
 
-I used AI coding agents (Claude, in Cursor) extensively throughout this project — not just to write this article, but to build the infrastructure itself. I'm not going to hide that.
+AI coding agents (Claude, in Cursor) were used heavily throughout this project — not just for writing this article, but for building the infrastructure itself. Terraform modules, IAM policies, KMS key configurations, and much of the debugging were developed in collaboration with agentic AI.
 
-But here's what the AI *didn't* do:
+The security story in this article is worth calling out specifically. The AI's first draft of the pipeline used node-level IAM with no discussion of secret access control. It generated correct-but-permissive policies — the kind that work in dev and become liabilities in production. The resource policies, the CMK recommendation, the IRSA requirement, tightening the KMS permissions with `kms:ViaService` — those came from asking "who else can access this?" and "what happens if this pod is compromised?" Once the requirements were specified, the AI translated them into correct code quickly. It's good at implementing security controls; it's less good at deciding which controls are needed in the first place.
 
-**The security insistence was mine.** The AI's first draft of the pipeline had node-level IAM and no discussion of secret access control. I pushed back: "not every pod should have access to my private keys." The IRSA section, the resource policies, the CMK recommendation — those came from me saying "this isn't good enough for production" and directing the AI to address it. The AI missed KMS envelope encryption as a failure mode. It didn't flag the IMDSv1 risk until I raised it. It wrote correct-but-permissive IAM policies that I had to tighten.
+The gotchas were real. The "access denied" from missing `kms:Decrypt` on envelope encryption cost an afternoon. The private keys in `/tmp` were found during a manual security sweep. The AI helped fix these once identified — but they surfaced from actual deployment, not from generation.
 
-**The gotchas were real.** Every gotcha came from hitting a wall during actual deployment, not from a prompt. The mystifying "access denied" from missing `kms:Decrypt`? That cost me an afternoon. The private keys in `/tmp`? Found during a manual security sweep. The AI helped me *fix* these once identified, but it didn't catch them proactively.
+If you're using AI to build infrastructure, one concrete takeaway: **review the security model separately from the functional code.** The first draft will likely work. It will also likely be too permissive. That's where the human judgment still matters most.
 
-What the AI did well: once I specified the security requirements, it generated correct resource policies, KMS key policies, and IRSA trust configurations. It's good at translating security requirements into code — as long as a human specifies the requirements.
-
-If you're using AI to build infrastructure: **don't accept the first draft's security model.** Push back. Ask "who else can access this?" and "what happens if this pod is compromised?" The AI will answer correctly — it just won't ask those questions itself.
-
-The entire project is public at [github.com/mpechner/tf_take2](https://github.com/mpechner/tf_take2). The repo's [`SECURITY-REVIEW.md`](https://github.com/mpechner/tf_take2/blob/main/SECURITY-REVIEW.md) documents every security finding — including the ones the AI missed on first pass.
+The full project is public at [github.com/mpechner/tf_take2](https://github.com/mpechner/tf_take2). The repo's [`SECURITY-REVIEW.md`](https://github.com/mpechner/tf_take2/blob/main/SECURITY-REVIEW.md) documents every security finding, and the commit history shows the tightening process in real time.

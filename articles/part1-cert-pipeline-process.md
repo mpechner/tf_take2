@@ -325,10 +325,10 @@ If you have cert-manager running in your cluster, you have 90% of this pipeline 
 
 ## A Note on How This Was Written
 
-I used AI coding agents (Claude, in Cursor) extensively throughout this project — not just to write this article, but to build the infrastructure itself. The Terraform modules, the Python publisher, the Ansible playbooks, and much of the debugging were done in collaboration with agentic AI. I'm not going to hide that.
+AI coding agents (Claude, in Cursor) were used heavily throughout this project — not just for writing this article, but for building the infrastructure itself. Terraform modules, the Python publisher, the Ansible playbooks, and much of the debugging were developed in collaboration with agentic AI.
 
-But here's what the AI *didn't* do: the idea was mine, the architecture decisions were mine, and every gotcha in this article came from hitting a wall during actual deployment — not from a prompt. The VPC endpoint DNS issue? Hours of debugging before I understood it. The `sacli` vs file copy distinction? Learned the hard way. The AI helped me *fix* these problems once I identified them, but it didn't warn me about them upfront.
+The architecture and design decisions came from understanding the environment — looking at cert-manager already running in the cluster and asking "why am I manually renewing a VPN cert when the automation is right there?" The issues documented here surfaced during actual deployment: the VPC endpoint DNS behavior cost hours of investigation before the fix was clear, and the `sacli` vs file copy distinction was learned the hard way when certs stopped working after a direct file replacement.
 
-What the AI *did* do well: it wrote clean Terraform, structured the Python publisher idiomatically, generated the Ansible playbook from my requirements, and organized this article from my scattered notes into something readable. It's a force multiplier, not a replacement for knowing what you're building and why.
+Where the AI helped was in execution: generating clean Terraform, structuring the Python publisher idiomatically, translating requirements into working Ansible, and organizing scattered notes into a readable article. In practice it worked as a force multiplier — the system still needed someone who understood the architecture, could recognize when something was wrong, and could iterate until it worked.
 
-The entire project is public at [github.com/mpechner/tf_take2](https://github.com/mpechner/tf_take2). Browse the commit history to see the iteration in real time — the initial AI-generated code, the failures, the fixes, and the "why didn't you catch this?" moments.
+The full project is public at [github.com/mpechner/tf_take2](https://github.com/mpechner/tf_take2). The commit history shows the evolution — initial implementations, failures, and the fixes that made it work.

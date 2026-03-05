@@ -91,7 +91,7 @@ Applied headers:
 
 The security headers middleware is deployed via Terraform in the 1-infrastructure stage.
 
-**No new variables required** - uses existing terraform.tfvars configuration.
+**No new variables required** - uses existing terraform.tfvars configuration. No changes to any variable values needed.
 
 ```bash
 # Ensure kubectl is configured for the cluster
@@ -99,14 +99,7 @@ kubectl config use-context dev-rke2
 
 # Apply security headers middleware
 cd deployments/dev-cluster/1-infrastructure
-# Verify your terraform.tfvars has standard required values:
-# - account_id
-# - aws_assume_role_arn
-# - route53_zone_id
-# - route53_domain
-# - letsencrypt_email
-# - cluster_name (default: dev-cluster)
-# - letsencrypt_environment (default: staging)
+# No terraform.tfvars changes required - just re-apply
 terraform init
 terraform apply
 ```
@@ -115,7 +108,6 @@ terraform apply
 - Creates `traefik-security-headers` Middleware resource in the traefik namespace
 - Configures Traefik to apply headers to all websecure (HTTPS) entrypoints
 - Headers are applied globally to all services behind Traefik
-- No changes to existing variable values required
 
 ---
 
@@ -139,7 +131,7 @@ Added `server_tokens off;` directive to nginx configuration in the nginx-sample 
 
 The nginx configuration change requires redeploying the 2-applications stage.
 
-**No new variables required** - uses existing terraform.tfvars configuration.
+**No new variables required** - uses existing terraform.tfvars configuration. No changes to any variable values needed.
 
 ```bash
 # Ensure kubectl context is set
@@ -147,18 +139,11 @@ kubectl config use-context dev-rke2
 
 # Apply nginx configuration changes
 cd deployments/dev-cluster/2-applications
-# Verify your terraform.tfvars has standard required values:
-# - account_id
-# - aws_assume_role_arn
-# - route53_domain
-# - letsencrypt_environment
-# - openvpn_cert_enabled (default: true)
-# - openvpn_cert_publisher_image (if cert enabled)
-terraform init
+# No terraform.tfvars changes required - just re-apply
 terraform apply
 ```
 
-**Note:** This will trigger a rolling update of the nginx deployment with the new configuration.
+**Note:** This will trigger a rolling update of the nginx deployment with `server_tokens off;` added to hide the version.
 
 ---
 

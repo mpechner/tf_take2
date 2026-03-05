@@ -91,13 +91,22 @@ Applied headers:
 
 The security headers middleware is deployed via Terraform in the 1-infrastructure stage.
 
+**No new variables required** - uses existing terraform.tfvars configuration.
+
 ```bash
 # Ensure kubectl is configured for the cluster
 kubectl config use-context dev-rke2
 
 # Apply security headers middleware
 cd deployments/dev-cluster/1-infrastructure
-# Ensure terraform.tfvars exists with your values (account_id, aws_assume_role_arn, route53_zone_id, etc.)
+# Verify your terraform.tfvars has standard required values:
+# - account_id
+# - aws_assume_role_arn
+# - route53_zone_id
+# - route53_domain
+# - letsencrypt_email
+# - cluster_name (default: dev-cluster)
+# - letsencrypt_environment (default: staging)
 terraform init
 terraform apply
 ```
@@ -106,6 +115,7 @@ terraform apply
 - Creates `traefik-security-headers` Middleware resource in the traefik namespace
 - Configures Traefik to apply headers to all websecure (HTTPS) entrypoints
 - Headers are applied globally to all services behind Traefik
+- No changes to existing variable values required
 
 ---
 
@@ -129,13 +139,21 @@ Added `server_tokens off;` directive to nginx configuration in the nginx-sample 
 
 The nginx configuration change requires redeploying the 2-applications stage.
 
+**No new variables required** - uses existing terraform.tfvars configuration.
+
 ```bash
 # Ensure kubectl context is set
 kubectl config use-context dev-rke2
 
 # Apply nginx configuration changes
 cd deployments/dev-cluster/2-applications
-# Ensure terraform.tfvars exists with your values
+# Verify your terraform.tfvars has standard required values:
+# - account_id
+# - aws_assume_role_arn
+# - route53_domain
+# - letsencrypt_environment
+# - openvpn_cert_enabled (default: true)
+# - openvpn_cert_publisher_image (if cert enabled)
 terraform init
 terraform apply
 ```

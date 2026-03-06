@@ -1,30 +1,54 @@
 # TF_org-user
 
-This Terraform module is designed to create and attach an IAM role for Terraform execution in an AWS organization. It uses a provider alias to assume a role in a specific AWS account.
+Creates the `terraform-execute` IAM role in each AWS account. This role has `AdministratorAccess` and trusts the management account to assume it, allowing all Terraform components to run cross-account from a single set of credentials.
 
 ## Structure
 
-- `main.tf`: Defines the provider alias and calls the `terraform_execute_role` module.
-- `providers.tf`: Declares the required AWS provider and configures the S3 backend for state storage.
-- `modules/terraform_execute_role/main.tf`: Contains the resources to create an IAM role and attach an administrator policy.
+- `main.tf`: Provider aliases and `terraform_execute_role` module calls — one per account.
+- `providers.tf`: Required provider and S3 backend.
+- `modules/terraform_execute_role/main.tf`: Creates the IAM role and attaches `AdministratorAccess`.
+
+## Accounts covered
+
+| Provider alias | Account | Notes |
+|---------------|---------|-------|
+| `org_root` | Management (org root) | **No assume_role** — uses whatever credentials are active in the shell. In Scenario A (IAM user in mgmt account) this is the IAM user directly. In Scenario B (dedicated mgmt account) this is the bootstrap/root credentials. Required so `terraform-execute` exists in the management account for future non-bootstrap runs. |
+| `mgmt` | Management OU member account | Assumes `OrganizationAccountAccessRole` |
+| `dev` | Dev account | Assumes `OrganizationAccountAccessRole` |
+| `network` | Network account | Assumes `OrganizationAccountAccessRole` |
+| `prod` | Prod account | Assumes `OrganizationAccountAccessRole` |
+
+## Prerequisites
+
+- Organization and all member accounts must already exist (run `Organization/` first using the bootstrap provider — see `Organization/README.md § Bootstrap`).
+- Your AWS credentials must be for the **management account** (the org root account where your IAM user lives).
+- `OrganizationAccountAccessRole` must exist in each member account (created automatically by AWS Organizations when accounts are created via Terraform).
 
 ## Usage
 
-1. Make sure the Organization plan has run
-2. Ensure you have the AWS CLI configured with appropriate credentials.
-3. Run `terraform init` to initialize the module and download the required providers.
-4. Run `terraform apply` to create the IAM role and attach the policy.
+1. Copy the example and set all account IDs (find them in AWS Console → Organizations → AWS accounts):
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your account IDs
+```
+
+2. Run from the management account:
+
+```bash
+cd TF_org-user
+terraform init
+terraform plan
+terraform apply
+```
+
+3. After apply, `terraform-execute` exists in all accounts. Switch `Organization/` off the bootstrap provider (see `Organization/README.md`).
 
 ## Requirements
 
-- Terraform version >= 0.12
-- AWS provider version ~> 5.0
+- Terraform >= 0.12
+- AWS provider ~> 5.0
 
-## Notes
+## Why explicit providers instead of a loop?
 
-- The module assumes a role in the AWS account specified in the provider configuration.
-- The IAM role created has the `AdministratorAccess` policy attached.
-
-## Why Define Each Role and Provider Individually?
-
-In this module, each IAM role and provider is defined individually rather than using a loop due to a limitation in how Terraform handles provider configurations, especially when using provider aliases. Terraform requires explicit provider configurations for each alias, which makes it challenging to use loops or dynamic configurations for providers. This is a known limitation in Terraform's design, and it's why we often see explicit definitions in configurations that need to manage multiple roles or accounts. 
+Terraform requires provider configurations to be static — you can't generate provider aliases dynamically. Each account gets its own explicit `provider` block and module call. This is a known Terraform limitation.

@@ -1,5 +1,5 @@
 variable "mgmt_account_id" {
-  description = "AWS account ID for the management/org account (where mpechner IAM user lives). This account is trusted to assume terraform-execute in all target accounts."
+  description = "AWS account ID for the organization management account (where your IAM user lives). This account is trusted to assume terraform-execute in all target accounts."
   type        = string
 }
 

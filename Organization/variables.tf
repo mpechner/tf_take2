@@ -1,8 +1,8 @@
 # Organization Terraform must run in the management account. Use terraform-execute there (created by TF_org-user).
 variable "management_account_id" {
-  description = "AWS account ID of the organization management account. terraform-execute in this account is used for both default and DR providers."
+  description = "AWS account ID of the organization management account (where your IAM user lives). terraform-execute in this account is used for both default and DR providers."
   type        = string
-  default     = "111416589270" # Override in terraform.tfvars with your management account ID
+  # No default — must be set in terraform.tfvars. See terraform.tfvars.example.
 }
 
 variable "aws_assume_role_arn" {

@@ -615,6 +615,46 @@ RKE2 was not configured with `system-default-registry`, causing kubelet to pull 
 
 ---
 
+## Part 4 — Architectural Decisions and Known Design Deviations
+
+These are structural choices made during initial setup that are documented here for transparency. They are not bugs or oversights in the current code — they are intentional decisions with known tradeoffs.
+
+---
+
+### ARCH-001 — `HIGH (prod)` — Org Management Account is Also the Operator Account
+
+**Accounts affected:** `990880295272` (org management account)
+
+**What happened:** The AWS Organization was created from the same account where the operator's IAM user (`mpechner`) lives. This means `990880295272` is simultaneously:
+- The AWS Organizations management account (controls SCPs, billing, account creation)
+- The account where human IAM user credentials live
+- The account where `terraform-execute` for org-level Terraform runs
+
+**What AWS recommends:** The management account should be a dedicated, minimal-use account — no IAM users, no workloads, no day-to-day access. Human access to AWS should go through IAM Identity Center (SSO) from a separate identity account, with the management account used only for org-level operations via automation.
+
+**Why it happened:** AWS Organizations is created from your first/existing account. When you create your first account and then create an org, that account becomes the permanent management account. The org management account **cannot be changed** after creation — AWS does not provide a migration path.
+
+**Fixing it properly** requires:
+1. Creating a new, empty AWS account
+2. Creating a new Organization from that account
+3. Inviting the existing accounts (dev, prod, network, mgmt) into the new org
+4. Re-applying SCPs and account structure from the new management account
+5. Decommissioning the old org
+
+This is substantial work and outside the scope of this learning-reference repo.
+
+**Mitigations in place:**
+- The `990880295272` account is not used for workloads — all actual infrastructure lives in dev/prod/network/mgmt member accounts
+- `terraform-execute` in `990880295272` has `AdministratorAccess` but is only assumed by the org-level Terraform — not by workload deployments
+- IMDSv2 enforced on all EC2 instances in member accounts
+- SCP restricts member accounts to approved regions only
+
+**For production:** Either accept this with documented risk (reasonable for small teams), or restructure with a dedicated management account. If restructuring, see AWS documentation on [migrating accounts between organizations](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_accounts_invites.html).
+
+**Risk accepted for this repo:** `ACCEPTED` — learning reference environment, single operator, org management account holds no workloads.
+
+---
+
 ## Summary Table
 
 | ID | Severity | Area | Short Description |
@@ -656,6 +696,7 @@ RKE2 was not configured with `system-default-registry`, causing kubelet to pull 
 | DEV-010 | MEDIUM | Attack Surface | `wget` + `jq` installed on agent nodes but never used |
 | DEV-011 | MEDIUM | Attack Surface | `git` installed on server nodes — no active use case |
 | DEV-012 | ~~HIGH~~ RESOLVED | Supply Chain | Docker Hub as default registry — causes rate-limit failures; replaced with `public.ecr.aws` (2026-03-04) |
+| ARCH-001 | HIGH (prod) / ACCEPTED (dev) | Architecture | Org management account is also the operator account — cannot be changed post-creation; mitigated by no workloads in mgmt account |
 
 ---
 

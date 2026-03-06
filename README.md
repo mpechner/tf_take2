@@ -65,6 +65,8 @@ Each directory has a `terraform.tfvars.example` as a starting point where availa
 
 | Component | File | Required values |
 |-----------|------|----------------|
+| `Organization` | `terraform.tfvars` | `management_account_id` |
+| `TF_org-user` | `terraform.tfvars` | `mgmt_account_id`, `mgmt_org_account_id`, `dev_account_id`, `network_account_id`, `prod_account_id` |
 | `buckets/dev-account` | `terraform.tfvars` | `account_id`, `aws_assume_role_arn` |
 | `deployments/dev-cluster/1-infrastructure` | `terraform.tfvars` | `account_id`, `aws_assume_role_arn`, `route53_zone_id`, `route53_domain`, `letsencrypt_email`, `letsencrypt_environment`, `cluster_name` |
 | `deployments/dev-cluster/2-applications` | `terraform.tfvars` | `account_id`, `aws_assume_role_arn`, `route53_domain`, `letsencrypt_environment`, `openvpn_cert_enabled`, `openvpn_cert_hosted_zone_id`, `openvpn_cert_letsencrypt_email`, `openvpn_cert_publisher_image` |
@@ -79,7 +81,51 @@ Each directory has a `terraform.tfvars.example` as a starting point where availa
 # Bootstrap
 
 ## Step 1: Organization Setup
-Set up the AWS Organization structure, accounts, and roles first.
+
+Set up the AWS Organization structure, accounts, and roles.
+
+> **Known architectural deviation:** In this repo, the org management account is the same account as the operator IAM user. AWS best practice is a dedicated management account (no IAM users, no workloads). This cannot be changed after org creation. See [ARCH-001 in SECURITY-REVIEW.md](SECURITY-REVIEW.md) for the full assessment.
+>
+> **Bootstrap depends on your setup.** See [Organization/README.md](Organization/README.md) for two scenarios:
+> - **Scenario A** (this repo): IAM user lives in the management account — bootstrap uses direct credentials
+> - **Scenario B** (best practice): Dedicated management account — bootstrap uses root/break-glass credentials, then deletes them
+
+**Short version (Scenario A — this repo's setup):**
+
+```bash
+cd Organization
+cp providers.tf providers.tf.with-assume
+cp providers.tf.bootstrap.example providers.tf
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars: set management_account_id
+terraform init -reconfigure
+terraform apply  # creates org, OUs, member accounts
+cd ..
+```
+
+**Then create `terraform-execute` in all accounts:**
+
+```bash
+cd TF_org-user
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars: set all account IDs (AWS Console → Organizations → AWS accounts)
+terraform init
+terraform apply
+cd ..
+```
+
+**Then switch Organization to the normal provider:**
+
+```bash
+cd Organization
+mv providers.tf.with-assume providers.tf
+terraform init -reconfigure
+terraform apply
+cd ..
+```
+
+**Subsequent runs** (bootstrap complete):
+
 ```bash
 cd Organization
 terraform init

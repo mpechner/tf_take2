@@ -1,0 +1,11 @@
+# Account IDs for all accounts in the AWS Organization.
+# mgmt_account_id: the org management account (where your IAM user lives, same as Organization/terraform.tfvars)
+# mgmt_org_account_id: the "management" member account (in the Management OU — separate from the org root)
+#
+# Find account IDs: AWS Console → Organizations → AWS accounts
+
+mgmt_account_id     = "000000000000"  # org root / management account (your IAM user's account)
+mgmt_org_account_id = "111111111111"  # management OU member account
+dev_account_id      = "222222222222"  # dev account
+network_account_id  = "333333333333"  # network account
+prod_account_id     = "444444444444"  # prod account

@@ -1,0 +1,33 @@
+# Bootstrap provider config: no assume_role (use default credentials in the management account).
+# Use when terraform-execute does not exist yet (first-time org setup or chicken-and-egg).
+#
+# How to use:
+#   1. Back up: cp providers.tf providers.tf.with-assume
+#   2. Replace: cp providers.tf.bootstrap.example providers.tf
+#   3. Run:     terraform init -reconfigure && terraform apply
+#   4. Run TF_org-user to create terraform-execute in the management account
+#   5. Restore:  mv providers.tf.with-assume providers.tf
+#   6. Set management_account_id in terraform.tfvars for future runs
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+provider "aws" {
+  alias  = "primary"
+  region = "us-east-1"
+}
+
+provider "aws" {
+  alias  = "dr"
+  region = "us-east-2"
+}
+
+terraform {
+  backend "s3" {
+    bucket         = "mikey-com-terraformstate"
+    dynamodb_table = "terraform-state"
+    key            = "Organizartion"
+    region         = "us-east-1"
+  }
+}

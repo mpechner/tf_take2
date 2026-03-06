@@ -1,0 +1,9 @@
+# Organization Terraform runs in the management account. Set its account ID so the
+# provider assumes terraform-execute there (role is created by TF_org-user in mgmt).
+#
+# Find your management account: AWS Console → Organizations → note the "Management account" ID.
+management_account_id = "000000000000"
+
+# Optional: override the role ARNs if you use a different role name or account for DR.
+# aws_assume_role_arn = "arn:aws:iam::000000000000:role/terraform-execute"
+# dr_assume_role_arn  = "arn:aws:iam::000000000000:role/terraform-execute"
